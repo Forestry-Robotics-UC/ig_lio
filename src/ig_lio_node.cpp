@@ -20,7 +20,7 @@
 
 namespace fs = boost::filesystem;
 
-LidarType lidar_type = LidarType::LIVOX;
+LidarType lidar_type = LidarType::HESAI;
 constexpr double kAccScale = 9.80665;
 bool enable_acc_correct = true;
 bool enable_undistort = true;
@@ -127,71 +127,6 @@ void CloudCallBack(const sensor_msgs::PointCloud2::ConstPtr& msg) {
       "Cloud Preprocess (Standard)");
 }
 
-// process livox
-void LivoxCloudCallBack(const livox_ros_driver::CustomMsg::ConstPtr& msg) {
-  static double last_lidar_timestamp = 0.0;
-  static CloudPtr temp_cloud_ptr(new CloudType());
-  static bool first_scan_flag = true;
-  static double first_scan_timestamp = 0.0;
-
-  timer.Evaluate(
-      [&]() {
-        lidar_timestamp = msg->header.stamp.toSec();
-
-        {
-          std::lock_guard<std::mutex> lock(buff_mutex);
-
-          // livox synchronizes with external IMU timestamps
-          if (!timediff_correct_flag &&
-              abs(lidar_timestamp - imu_timestamp) > 1.0 && !imu_buff.empty()) {
-            timediff_correct_flag = true;
-            timediff_lidar_wrt_imu = lidar_timestamp + 0.1 - imu_timestamp;
-            // clear unnecessary imu data after the synchronization
-            imu_buff.clear();
-            LOG(INFO) << "timediff_lidar_wrt_imu: " << timediff_lidar_wrt_imu
-                      << std::endl;
-          }
-        }
-
-        // livox has been synchronize with IMU
-        if (!timediff_correct_flag &&
-            abs(lidar_timestamp - imu_timestamp) < 1.0) {
-          timediff_correct_flag = true;
-        }
-        if (!timediff_correct_flag) {
-          LOG(INFO) << "Livox LiDAR has not Sync with other sensor!!!"
-                    << std::endl;
-          return;
-        }
-
-        {
-          std::lock_guard<std::mutex> lock(buff_mutex);
-
-          // prevent timestamp disorder
-          if (lidar_timestamp < last_lidar_timestamp) {
-            LOG(WARNING) << "lidar loop back, clear buffer";
-            cloud_buff.clear();
-            last_lidar_timestamp = lidar_timestamp;
-          }
-
-          if (first_scan_flag) {
-            first_scan_timestamp = lidar_timestamp;
-            first_scan_flag = false;
-          }
-
-          cloud_preprocess_ptr->Process(
-              msg, temp_cloud_ptr, first_scan_timestamp);
-
-          first_scan_flag = true;
-          last_lidar_timestamp = lidar_timestamp;
-
-          CloudPtr cloud_ptr(new CloudType(*temp_cloud_ptr));
-          cloud_buff.push_back(std::make_pair(first_scan_timestamp, cloud_ptr));
-          temp_cloud_ptr->clear();
-        }
-      },
-      "Cloud Preprocess (Livox)");
-}
 
 bool SyncMeasurements() {
   static bool measurement_pushed = false;
@@ -417,7 +352,7 @@ void Process() {
   Eigen::Matrix4d result_pose = lio_ptr->GetCurrentPose();
   // odometry message
   nav_msgs::Odometry odom_msg;
-  odom_msg.header.frame_id = "world";
+  odom_msg.header.frame_id = "map";
   odom_msg.header.stamp = ros::Time(sensor_measurement.lidar_end_time_);
   Eigen::Quaterniond temp_q(result_pose.block<3, 3>(0, 0));
   odom_msg.pose.pose.orientation.x = temp_q.x();
@@ -433,14 +368,14 @@ void Process() {
   tf::Quaternion q_tf(temp_q.x(), temp_q.y(), temp_q.z(), temp_q.w());
   tf::Vector3 t_tf(result_pose(0, 3), result_pose(1, 3), result_pose(2, 3));
   tf_broadcaster.sendTransform(tf::StampedTransform(
-      tf::Transform(q_tf, t_tf), odom_msg.header.stamp, "world", "base"));
+      tf::Transform(q_tf, t_tf), odom_msg.header.stamp, "map", "base_link"));
   // publish dense scan
   CloudPtr trans_cloud(new CloudType());
   pcl::transformPointCloud(
       *sensor_measurement.cloud_ptr_, *trans_cloud, result_pose);
   sensor_msgs::PointCloud2 scan_msg;
   pcl::toROSMsg(*trans_cloud, scan_msg);
-  scan_msg.header.frame_id = "world";
+  scan_msg.header.frame_id = "map";
   scan_msg.header.stamp = ros::Time(sensor_measurement.lidar_end_time_);
   current_scan_pub.publish(scan_msg);
   // publish keyframe path and scan
@@ -463,17 +398,17 @@ void Process() {
     pcl::transformPointCloud(*cloud_DS, *trans_cloud_DS, result_pose);
     sensor_msgs::PointCloud2 keyframe_scan_msg;
     pcl::toROSMsg(*trans_cloud_DS, keyframe_scan_msg);
-    keyframe_scan_msg.header.frame_id = "world";
+    keyframe_scan_msg.header.frame_id = "map";
     keyframe_scan_msg.header.stamp =
         ros::Time(sensor_measurement.lidar_end_time_);
     keyframe_scan_pub.publish(keyframe_scan_msg);
 
     // publich path
     path_array.header.stamp = ros::Time(sensor_measurement.lidar_end_time_);
-    path_array.header.frame_id = "world";
+    path_array.header.frame_id = "map";
     geometry_msgs::PoseStamped pose_stamped;
     pose_stamped.header.stamp = ros::Time(sensor_measurement.lidar_end_time_);
-    pose_stamped.header.frame_id = "world";
+    pose_stamped.header.frame_id = "map";
     pose_stamped.pose.position.x = result_pose(0, 3);
     pose_stamped.pose.position.y = result_pose(1, 3);
     pose_stamped.pose.position.z = result_pose(2, 3);
@@ -561,18 +496,13 @@ int main(int argc, char** argv) {
     lidar_type = LidarType::HESAI;
   } else if (lidar_type_string == "ouster") {
     lidar_type = LidarType::OUSTER;
-  } else if (lidar_type_string == "livox") {
-    lidar_type = LidarType::LIVOX;
   } else {
     LOG(ERROR) << "Error lidar type!";
     exit(0);
   }
   ros::Subscriber cloud_sub;
-  if (lidar_type == LidarType::LIVOX) {
-    cloud_sub = nh.subscribe(lidar_topic, 10000, LivoxCloudCallBack);
-  } else {
-    cloud_sub = nh.subscribe(lidar_topic, 10000, CloudCallBack);
-  }
+
+  cloud_sub = nh.subscribe(lidar_topic, 10000, CloudCallBack);
 
   // load param
   // 1. pointcloud_preprocess

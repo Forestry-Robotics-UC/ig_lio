@@ -14,11 +14,9 @@
 
 #include <pcl_conversions/pcl_conversions.h>
 
-#include <livox_ros_driver/CustomMsg.h>
-
 #include "point_type.h"
 
-enum class LidarType { LIVOX, VELODYNE, OUSTER, HESAI, VELODYNEM1600};
+enum class LidarType { VELODYNE, OUSTER, HESAI, VELODYNEM1600};
 
 // for Velodyne LiDAR
 struct VelodynePointXYZIRT {
@@ -31,7 +29,7 @@ struct VelodynePointXYZIRT {
 POINT_CLOUD_REGISTER_POINT_STRUCT(
     VelodynePointXYZIRT,
     (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(
-        uint16_t, ring, ring)(float, time, time))
+        uint16_t, ring, ring)(float, time, t))
 struct VelodyneM1600PointXYZIRT {
   PCL_ADD_POINT4D;
   uint8_t intensity;
@@ -66,7 +64,7 @@ struct OusterPointXYZIRT {
   float intensity;
   uint32_t t;
   uint16_t reflectivity;
-  uint8_t ring;
+  uint16_t ring;
   uint16_t noise;
   uint32_t range;
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -75,7 +73,7 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(
     OusterPointXYZIRT,
     (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(
         uint32_t, t, t)(uint16_t, reflectivity, reflectivity)(
-        uint8_t, ring, ring)(uint16_t, noise, noise)(uint32_t, range, range))
+        uint16_t, ring, ring)(uint16_t, noise, ambient)(uint32_t, range, range))
 // struct OusterPointXYZIRT {
 //   PCL_ADD_POINT4D;
 //   float intensity;
@@ -110,10 +108,6 @@ class PointCloudPreprocess {
       : config_(config) {}
 
   ~PointCloudPreprocess() = default;
-
-  void Process(const livox_ros_driver::CustomMsg::ConstPtr& msg,
-               pcl::PointCloud<PointType>::Ptr& cloud_out,
-               const double last_start_time = 0.0);
 
   void Process(const sensor_msgs::PointCloud2::ConstPtr& msg,
                pcl::PointCloud<PointType>::Ptr& cloud_out);

@@ -1,6 +1,6 @@
 #lidar_topic: /hesai/pandar
 lidar_topic: /rslidar_points
-imu_topic: /imu/data
+imu_topic: /madgwick_filtered_imu
 lidar_type: Hesai # livox velodyne ouster Hesai Bpearl
 min_radius: 1
 max_radius: 100
@@ -14,9 +14,9 @@ voxel_map_resolution: 0.5
 max_iterations: 10
 
 acc_cov: 0.01
-gyr_cov: 0.01
-ba_cov: 0.0001
-bg_cov: 0.0001
+gyr_cov: 0.0001
+ba_cov: 0.000001
+bg_cov: 0.000001
 
 gicp_constraints_gain: 100.0
 point2plane_constraints_gain: 1000.0
@@ -38,8 +38,16 @@ init_bg_cov: 0.0001
 #              0, -1, 0,
 #              0, 0, -1]
 
-t_imu_lidar : [0.16592 0.06659 0.13617]
-R_imu_lidar: [0.9526330, 0, 0.3041224,
-              0, 1, 0,
-              -0.3041224, 0, 0.9526330]
-              
+#t_imu_lidar : [0.16592 0.06659 0.13617]
+#R_imu_lidar: [0.9526330, 0, 0.3041224,
+#              0, 1, 0,
+#              -0.3041224, 0, 0.9526330]
+t_imu_lidar: [0.002, 0.006, 0.065]
+R_imu_lidar: [0.9322978,  0.0000000,  0.3616916,
+              0.0000000,  1.0000000,  0.0000000,
+              -0.3616916,  0.0000000,  0.9322978]              
+
+#t_imu_lidar: [0.022, -0.006, -0.061]
+#R_imu_lidar: [0, 0.3620349, 0.9321645,
+#              -1, 0, 0,
+#              0, -0.9321645, 0.3620349] 

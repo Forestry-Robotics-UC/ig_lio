@@ -2,11 +2,11 @@
     <param name="use_sim_time" value="true" />
 
     <!-- Static transforms -->
-    <node pkg="tf2_ros" type="static_transform_publisher" name="rslidar_broadcaster" args="0.15 0 0.13 0 0.37 0 base rslidar" />
-    <node pkg="tf2_ros" type="static_transform_publisher" name="camera_link_broadcaster" args="0.16 0 0.06 0 0 0 base camera_link" />
+    <node pkg="tf" type="static_transform_publisher" name="ouster_broadcaster" args="0 0 0 0 0 0 base_link os_sensor 10" />
+    <node pkg="tf" type="static_transform_publisher" name="imu_broadcaster" args="0 0 0 0 0 0 base_link imu 10" />
 
     <!-- Load configuration parameters -->
-    <rosparam command="load" file="$(find ig_lio)/config/Bpearl.yaml" />
+    <rosparam command="load" file="$(find ig_lio)/config/ouster128.yaml" />
 
     <!-- ig_lio node -->
     <node pkg="ig_lio" type="ig_lio_node" name="ig_lio_node" output="screen">
@@ -17,22 +17,13 @@
     <!-- Nodelet manager -->
     <node pkg="nodelet" type="nodelet" name="nodelet_manager" args="manager" output="screen" />
 
-    <!-- IMU Transformer Nodelet -->
-    <node pkg="nodelet" type="nodelet" name="imu_transformer" args="load imu_transformer/imu_transformer_nodelet nodelet_manager" output="screen">
-        <param name="~target_frame" value="camera_gyro_frame" />
-        
-        <!-- Remap input and output topics to match your setup -->
-        <remap from="imu_in/data" to="/camera/imu" />
-        <remap from="imu_out/data" to="/imu/data_transformed" />
-    </node>
-
     <!-- IMU Filter (Madgwick) -->
     <node pkg="imu_filter_madgwick" type="imu_filter_node" name="imu_filter_madgwick" output="screen">
         <param name="use_mag" value="false"/>
         <param name="publish_tf" value="false"/>
         <param name="world_frame" value="nwu"/>
-        <param name="base_link_frame" value="base"/>
-        <remap from="imu/data_raw" to="/imu/data_transformed" />
+        <param name="base_link_frame" value="base_link"/>
+        <remap from="imu/data_raw" to="/ouster/imu" />
         <remap from="imu/data" to="/madgwick_filtered_imu"/>
     </node>
 
@@ -49,3 +40,4 @@
     <!-- RViz Visualization -->
     <!---node name="rviz" pkg="rviz" type="rviz" args="-d $(find ig_lio)/rviz/lio_show_mine.rviz" required="true" /-->
 </launch>
+

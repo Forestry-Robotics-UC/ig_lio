@@ -4,34 +4,6 @@
 extern Timer timer;
 
 void PointCloudPreprocess::Process(
-    const livox_ros_driver::CustomMsg::ConstPtr& msg,
-    pcl::PointCloud<PointType>::Ptr& cloud_out,
-    const double last_start_time) {
-  double time_offset =
-      (msg->header.stamp.toSec() - last_start_time) * 1000.0;  // ms
-
-  for (size_t i = 1; i < msg->point_num; ++i) {
-    if ((msg->points[i].line < num_scans_) &&
-        ((msg->points[i].tag & 0x30) == 0x10 ||
-         (msg->points[i].tag & 0x30) == 0x00) &&
-        !HasInf(msg->points[i]) && !HasNan(msg->points[i]) &&
-        !IsNear(msg->points[i], msg->points[i - 1]) &&
-        (i % config_.point_filter_num == 0)) {
-      PointType point;
-      point.normal_x = 0;
-      point.normal_y = 0;
-      point.normal_z = 0;
-      point.x = msg->points[i].x;
-      point.y = msg->points[i].y;
-      point.z = msg->points[i].z;
-      point.intensity = msg->points[i].reflectivity;
-      point.curvature = time_offset + msg->points[i].offset_time * 1e-6;  // ms
-      cloud_out->push_back(point);
-    }
-  }
-}
-
-void PointCloudPreprocess::Process(
     const sensor_msgs::PointCloud2::ConstPtr& msg,
     pcl::PointCloud<PointType>::Ptr& cloud_out) {
   switch (config_.lidar_type) {
@@ -219,6 +191,8 @@ void PointCloudPreprocess::ProcessOuster(
   pcl::PointCloud<OusterPointXYZIRT> cloud_origin;
   pcl::fromROSMsg(*msg, cloud_origin);
 
+  const uint32_t t_start = cloud_origin.points[0].t;
+
   for (size_t i = 0; i < cloud_origin.size(); ++i) {
     if ((i % config_.point_filter_num == 0) && !HasInf(cloud_origin.at(i)) &&
         !HasNan(cloud_origin.at(i))) {
@@ -231,7 +205,9 @@ void PointCloudPreprocess::ProcessOuster(
       point.z = cloud_origin.at(i).z;
       point.intensity = cloud_origin.at(i).intensity;
       // ms
-      point.curvature = cloud_origin.at(i).t * 1000;
+      // point.curvature = cloud_origin.at(i).t * 1000;
+      point.curvature =
+          (cloud_origin.at(i).t - t_start) * config_.time_scale * 1000.0;
       cloud_out->push_back(point);
     }
   }

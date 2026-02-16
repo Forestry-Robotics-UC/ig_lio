@@ -31,7 +31,7 @@ struct VelodynePointXYZIRT {
 POINT_CLOUD_REGISTER_POINT_STRUCT(
     VelodynePointXYZIRT,
     (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(
-        uint16_t, ring, ring)(float, time, time))
+        uint16_t, ring, ring)(float, t, t))
         
 
 struct HesaiPointXYZIRT {
