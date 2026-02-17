@@ -1,0 +1,42 @@
+<launch>
+    <param name="use_sim_time" value="false" />
+
+    <!-- Static transforms -->
+    <node pkg="tf" type="static_transform_publisher" name="ouster_broadcaster" args="0 0 0 0 0 0 base_link os_sensor 10" />
+    <node pkg="tf" type="static_transform_publisher" name="imu_broadcaster" args="0 0 0 0 0 0 base_link imu 10" />
+
+    <!-- Load configuration parameters -->
+    <rosparam command="load" file="$(find ig_lio)/config/ouster128.yaml" />
+
+    <!-- ig_lio node -->
+    <node pkg="ig_lio" type="ig_lio_node" name="ig_lio_node" output="screen">
+        <!--remap from="tf" to="tf_localization" /-->
+        <!--remap from="lio_odom" to="offline_lio_odom"/-->
+    </node>
+
+    <!-- Nodelet manager -->
+    <node pkg="nodelet" type="nodelet" name="nodelet_manager" args="manager" output="screen" />
+
+    <!-- IMU Filter (Madgwick) -->
+    <!--node pkg="imu_filter_madgwick" type="imu_filter_node" name="imu_filter_madgwick" output="screen">
+        <param name="use_mag" value="false"/>
+        <param name="publish_tf" value="false"/>
+        <param name="world_frame" value="nwu"/>
+        <param name="base_link_frame" value="base_link"/>
+        <remap from="imu/data_raw" to="/ouster/imu" />
+        <remap from="imu/data" to="/madgwick_filtered_imu"/>
+    </node-->
+
+    <!-- IMU Complementary Filter -->
+    <!--node pkg="imu_complementary_filter" type="complementary_filter_node" name="imu_complementary_filter" output="screen">
+        <param name="use_mag" value="false"/>
+        <param name="publish_tf" value="false"/>
+        <param name="world_frame" value="nwu"/>
+        <param name="base_link_frame" value="base"/>
+        <remap from="imu/data_raw" to="/madgwick_filtered_imu"/>
+        <remap from="imu/data" to="/filtered_imu"/>
+    </node-->
+
+    <!-- RViz Visualization -->
+    <!---node name="rviz" pkg="rviz" type="rviz" args="-d $(find ig_lio)/rviz/lio_show_mine.rviz" required="true" /-->
+</launch>
