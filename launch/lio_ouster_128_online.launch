@@ -9,13 +9,13 @@
     <rosparam command="load" file="$(find ig_lio)/config/ouster128.yaml" />
 
     <!-- ig_lio node -->
-    <node pkg="ig_lio" type="ig_lio_node" name="ig_lio_node" output="screen">
+    <node pkg="ig_lio" type="ig_lio_node" name="ig_lio_node" output="log">
         <!--remap from="tf" to="tf_localization" /-->
         <!--remap from="lio_odom" to="offline_lio_odom"/-->
     </node>
 
     <!-- Nodelet manager -->
-    <node pkg="nodelet" type="nodelet" name="nodelet_manager" args="manager" output="screen" />
+    <node pkg="nodelet" type="nodelet" name="nodelet_manager" args="manager" output="log" />
 
     <!-- IMU Filter (Madgwick) -->
     <!--node pkg="imu_filter_madgwick" type="imu_filter_node" name="imu_filter_madgwick" output="screen">
