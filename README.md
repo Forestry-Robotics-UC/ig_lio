@@ -13,7 +13,6 @@ Preserves the functionality of the original code, but introduces some important 
 The original repository can be found [here](https://github.com/zijiechenrobotics/ig_lio).
 
 ---
----
 
 ## To Install Dependencies
 
