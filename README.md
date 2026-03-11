@@ -17,8 +17,10 @@ The original repository can be found [here](https://github.com/zijiechenrobotics
 ## To Install Dependencies
 
 ```bash
-rosdep install --from-paths src --ignore-src -r -y
+cd ~/catkin_ws && rosdep install --from-paths src --ignore-src -r -y
 ```
+
+❗ **Note**: Change `~/catkin_ws` to your actual workspace path before running the command.
 
 ## Instructions to Use
 
