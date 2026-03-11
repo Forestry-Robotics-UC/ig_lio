@@ -1,11 +1,9 @@
-#lidar_topic: /hesai/pandar
 lidar_topic: /rslidar_points
 imu_topic: /madgwick_filtered_imu
-lidar_type: Hesai # livox velodyne ouster Hesai Bpearl
+lidar_type: Hesai
 min_radius: 1
 max_radius: 100
 point_filter_num: 5
-# time_scale: 0 # nclt: 0.001 other: 1000.0
 enable_ahrs_initalization: false
 enable_acc_correct: false
 
@@ -31,23 +29,7 @@ init_ba_cov: 0.0001
 init_bg_cov: 0.0001
 
 
-# botanic graden
-
-#t_imu_lidar : [-0.011775 -0.006253 -0.0438256454]
-#R_imu_lidar: [1, 0, 0,
-#              0, -1, 0,
-#              0, 0, -1]
-
-#t_imu_lidar : [0.16592 0.06659 0.13617]
-#R_imu_lidar: [0.9526330, 0, 0.3041224,
-#              0, 1, 0,
-#              -0.3041224, 0, 0.9526330]
 t_imu_lidar: [0.002, 0.006, 0.065]
 R_imu_lidar: [0.9322978,  0.0000000,  0.3616916,
               0.0000000,  1.0000000,  0.0000000,
-              -0.3616916,  0.0000000,  0.9322978]              
-
-#t_imu_lidar: [0.022, -0.006, -0.061]
-#R_imu_lidar: [0, 0.3620349, 0.9321645,
-#              -1, 0, 0,
-#              0, -0.9321645, 0.3620349] 
+              -0.3616916,  0.0000000,  0.9322978]

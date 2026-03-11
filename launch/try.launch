@@ -1,9 +1,0 @@
-<launch>
-  
-  
-  <node pkg="velodyne_pointcloud" type="velodyne_transform_node" name="velodyne_transform_node"/>
-  <node pkg="velodyne_pointcloud" type="velodyne_convert_node" name="velodyne_convert_node"/>
-
-  <node pkg="rviz" type="rviz" name="rviz" args="-d $(find velodyne_pointcloud)/rviz/velodyne.rviz"/>
-</launch>
-
