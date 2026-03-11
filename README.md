@@ -30,3 +30,7 @@ Let's consider, as an example, that we are using the Ouster OS1 Rev7 128 channel
 If, instead we want to run it offline, we run `roslaunch ig_lio lio_ouster_128.launch` (or simple turn the `use_sim_time` parameter to true).
 
 To use with different LiDAR/IMU combos, create a new config file or modify an existing one to adapt it to your needs, keeping in mind that the translation vector and rotation matrix provided must map the points from the LiDAR frame to the IMU frame, not the other way around!
+
+---
+
+Tested in docker with `osrf:ros-noetic-full-focal`.
