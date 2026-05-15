@@ -124,6 +124,8 @@ class LIO {
 
   size_t GetFinalIterations() { return iter_num_; }
 
+  Eigen::Matrix<double, 15, 15> GetCovariance() const { return P_; }
+
  private:
   static constexpr int IndexErrorOri{0};
   static constexpr int IndexErrorPos{3};
