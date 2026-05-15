@@ -350,9 +350,11 @@ void Process() {
 
   // Setp 5: Send to rviz for visualization
   Eigen::Matrix4d result_pose = lio_ptr->GetCurrentPose();
+  Eigen::Matrix<double, 15, 15> P = lio_ptr->GetCovariance();
   // odometry message
   nav_msgs::Odometry odom_msg;
-  odom_msg.header.frame_id = "map";
+  odom_msg.header.frame_id = "odom";
+  odom_msg.child_frame_id = "base_link";
   odom_msg.header.stamp = ros::Time(sensor_measurement.lidar_end_time_);
   Eigen::Quaterniond temp_q(result_pose.block<3, 3>(0, 0));
   odom_msg.pose.pose.orientation.x = temp_q.x();
@@ -362,20 +364,35 @@ void Process() {
   odom_msg.pose.pose.position.x = result_pose(0, 3);
   odom_msg.pose.pose.position.y = result_pose(1, 3);
   odom_msg.pose.pose.position.z = result_pose(2, 3);
+
+  // Populate Pose covariance (ROS format: x, y, z, roll, pitch, yaw)
+  // ig-lio P_ order is: Ori (0-2), Pos (3-5), Vel (6-8), Ba (9-11), Bg (12-14)
+  for (int i = 0; i < 3; i++) {
+    for (int j = 0; j < 3; j++) {
+      odom_msg.pose.covariance[(i)*6 + (j)] = P(3+i, 3+j);         // pos-pos
+      odom_msg.pose.covariance[(i)*6 + (j+3)] = P(3+i, j);         // pos-ori
+      odom_msg.pose.covariance[(i+3)*6 + (j)] = P(i, 3+j);         // ori-pos
+      odom_msg.pose.covariance[(i+3)*6 + (j+3)] = P(i, j);         // ori-ori
+      
+      // Populate Twist covariance (Only linear velocity is tracked directly in P_)
+      odom_msg.twist.covariance[(i)*6 + (j)] = P(6+i, 6+j);        // vel-vel
+    }
+  }
+
   odom_pub.publish(odom_msg);
   // tf message
   static tf::TransformBroadcaster tf_broadcaster;
   tf::Quaternion q_tf(temp_q.x(), temp_q.y(), temp_q.z(), temp_q.w());
   tf::Vector3 t_tf(result_pose(0, 3), result_pose(1, 3), result_pose(2, 3));
   tf_broadcaster.sendTransform(tf::StampedTransform(
-      tf::Transform(q_tf, t_tf), odom_msg.header.stamp, "map", "base_link"));
+      tf::Transform(q_tf, t_tf), odom_msg.header.stamp, "odom", "base_link"));
   // publish dense scan
   CloudPtr trans_cloud(new CloudType());
   pcl::transformPointCloud(
       *sensor_measurement.cloud_ptr_, *trans_cloud, result_pose);
   sensor_msgs::PointCloud2 scan_msg;
   pcl::toROSMsg(*trans_cloud, scan_msg);
-  scan_msg.header.frame_id = "map";
+  scan_msg.header.frame_id = "odom";
   scan_msg.header.stamp = ros::Time(sensor_measurement.lidar_end_time_);
   current_scan_pub.publish(scan_msg);
   // publish keyframe path and scan
@@ -398,17 +415,17 @@ void Process() {
     pcl::transformPointCloud(*cloud_DS, *trans_cloud_DS, result_pose);
     sensor_msgs::PointCloud2 keyframe_scan_msg;
     pcl::toROSMsg(*trans_cloud_DS, keyframe_scan_msg);
-    keyframe_scan_msg.header.frame_id = "map";
+    keyframe_scan_msg.header.frame_id = "odom";
     keyframe_scan_msg.header.stamp =
         ros::Time(sensor_measurement.lidar_end_time_);
     keyframe_scan_pub.publish(keyframe_scan_msg);
 
     // publich path
     path_array.header.stamp = ros::Time(sensor_measurement.lidar_end_time_);
-    path_array.header.frame_id = "map";
+    path_array.header.frame_id = "odom";
     geometry_msgs::PoseStamped pose_stamped;
     pose_stamped.header.stamp = ros::Time(sensor_measurement.lidar_end_time_);
-    pose_stamped.header.frame_id = "map";
+    pose_stamped.header.frame_id = "odom";
     pose_stamped.pose.position.x = result_pose(0, 3);
     pose_stamped.pose.position.y = result_pose(1, 3);
     pose_stamped.pose.position.z = result_pose(2, 3);
