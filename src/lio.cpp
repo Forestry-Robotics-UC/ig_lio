@@ -114,11 +114,11 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
 
   ava_effect_feat_num_ += (effect_feat_num_ - ava_effect_feat_num_) /
                           static_cast<double>(lidar_frame_count_);
-  LOG(INFO) << "curr_feat_num: " << effect_feat_num_
-            << " ava_feat_num: " << ava_effect_feat_num_
-            << " keyframe_count: " << keyframe_count_
-            << " lidar_frame_count: " << lidar_frame_count_
-            << " grid_size: " << voxel_map_ptr_->GetVoxelMapSize();
+//  LOG(INFO) << "curr_feat_num: " << effect_feat_num_
+//            << " ava_feat_num: " << ava_effect_feat_num_
+//            << " keyframe_count: " << keyframe_count_
+//            << " lidar_frame_count: " << lidar_frame_count_
+//            << " grid_size: " << voxel_map_ptr_->GetVoxelMapSize();
   return true;
 }
 
@@ -912,9 +912,9 @@ bool LIO::StaticInitialization(SensorMeasurement& sensor_measurement) {
   lio_time_ = sensor_measurement.imu_buff_.back().header.stamp.toSec();
   lio_init_ = true;
 
-  LOG(INFO) << "imu static, mean_acc_: " << mean_acc_.transpose()
-            << " init_ba: " << init_ba.transpose() << ", ori: " << std::endl
-            << curr_state_.pose.block<3, 3>(0, 0);
+//  LOG(INFO) << "imu static, mean_acc_: " << mean_acc_.transpose()
+//            << " init_ba: " << init_ba.transpose() << ", ori: " << std::endl
+//            << curr_state_.pose.block<3, 3>(0, 0);
 
   return true;
 }

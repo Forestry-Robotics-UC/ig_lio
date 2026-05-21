@@ -341,12 +341,12 @@ void Process() {
   timer.Evaluate([&] { lio_ptr->MeasurementUpdate(sensor_measurement); },
                  "measurement update");
 
-  LOG(INFO) << "iter_num: " << lio_ptr->GetFinalIterations() << std::endl
-            << "ba: " << lio_ptr->GetCurrentBa().transpose()
-            << " ba_norm: " << lio_ptr->GetCurrentBa().norm()
-            << " bg: " << lio_ptr->GetCurrentBg().transpose() * 180.0 / M_PI
-            << " bg_norm: " << lio_ptr->GetCurrentBg().norm() * 180.0 / M_PI
-            << std::endl;
+//  LOG(INFO) << "iter_num: " << lio_ptr->GetFinalIterations() << std::endl
+//            << "ba: " << lio_ptr->GetCurrentBa().transpose()
+//            << " ba_norm: " << lio_ptr->GetCurrentBa().norm()
+//            << " bg: " << lio_ptr->GetCurrentBg().transpose() * 180.0 / M_PI
+//            << " bg_norm: " << lio_ptr->GetCurrentBg().norm() * 180.0 / M_PI
+//            << std::endl;
 
   // Setp 5: Send to rviz for visualization
   Eigen::Matrix4d result_pose = lio_ptr->GetCurrentPose();
