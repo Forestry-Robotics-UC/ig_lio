@@ -9,10 +9,14 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
     CloudPtr filtered_cloud_ptr(new CloudType());
     filtered_cloud_ptr->points.reserve(sensor_measurement.cloud_ptr_->size());
     for (const auto& pt : sensor_measurement.cloud_ptr_->points) {
-      if (InRadius(pt)) {
+    if (InRadius(pt)) {
         filtered_cloud_ptr->points.emplace_back(pt);
-      }
     }
+    }
+    // Tell PCL the cloud dimensions are valid
+    filtered_cloud_ptr->width = filtered_cloud_ptr->points.size();
+    filtered_cloud_ptr->height = 1;
+    filtered_cloud_ptr->is_dense = true;
     sensor_measurement.cloud_ptr_ = filtered_cloud_ptr;
 
     timer.Evaluate(
@@ -33,6 +37,8 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
         },
         "undistort");
 
+    std::cout << "cloud after undistort = " << *sensor_measurement.cloud_ptr_ << std::endl;
+
     timer.Evaluate(
         [&, this]() {
           fast_voxel_grid_ptr_->Filter(
@@ -40,6 +46,10 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
         },
         "downsample");
   }
+
+  std::cout << "cloud after downsample = " << *sensor_measurement.cloud_ptr_ << std::endl;
+
+  std::cout << "lidar_frame_count_: " << lidar_frame_count_ << std::endl;
 
   // Make sure the local map is dense enought to measurement update
   if (lidar_frame_count_ <= 10) {
@@ -50,6 +60,8 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
     lidar_frame_count_++;
     return true;
   }
+
+  std::cout << "cloud after transform = " << *sensor_measurement.cloud_ptr_ << std::endl;
 
   // measurement update
   prev_state_ = curr_state_;
@@ -75,8 +87,9 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
     iter_num_++;
   }
 
-  // LOG(INFO) << "final hessian: " << std::endl << final_hessian_;
-  // P_ = final_hessian_.inverse();
+  std::cout << "final hessian: " << std::endl << final_hessian_;
+//   P_ = final_hessian_.inverse();
+
   ComputeFinalCovariance(delta_x);
   prev_state_ = curr_state_;
 
@@ -114,11 +127,11 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
 
   ava_effect_feat_num_ += (effect_feat_num_ - ava_effect_feat_num_) /
                           static_cast<double>(lidar_frame_count_);
-//  LOG(INFO) << "curr_feat_num: " << effect_feat_num_
-//            << " ava_feat_num: " << ava_effect_feat_num_
-//            << " keyframe_count: " << keyframe_count_
-//            << " lidar_frame_count: " << lidar_frame_count_
-//            << " grid_size: " << voxel_map_ptr_->GetVoxelMapSize();
+ std::cout << "curr_feat_num: " << effect_feat_num_
+           << " ava_feat_num: " << ava_effect_feat_num_
+           << " keyframe_count: " << keyframe_count_
+           << " lidar_frame_count: " << lidar_frame_count_
+           << " grid_size: " << voxel_map_ptr_->GetVoxelMapSize();
   return true;
 }
 
@@ -128,6 +141,14 @@ bool LIO::StepOptimize(const SensorMeasurement& sensor_measurement,
   Eigen::Matrix<double, 15, 1> b = Eigen::Matrix<double, 15, 1>::Zero();
 
   double y0 = 0;
+
+  std::cout << "[StepOptimize] start"
+            << " measurement_type=" << static_cast<int>(sensor_measurement.measurement_type_)
+            << " cloud_size="
+            << (sensor_measurement.cloud_ptr_ ? sensor_measurement.cloud_ptr_->size() : 0)
+            << " imu_buf_size=" << sensor_measurement.imu_buff_.size()
+            << " keyframe_count=" << keyframe_count_ << std::endl;
+
   switch (sensor_measurement.measurement_type_) {
   case MeasurementType::LIDAR: {
     double y0_lidar = 0.0;
@@ -135,8 +156,7 @@ bool LIO::StepOptimize(const SensorMeasurement& sensor_measurement,
     timer.Evaluate(
         [&, this]() {
           // After LIO has moved some distance, each voxel is already well
-          // formulate
-          // the surrounding environments
+          // formulate the surrounding environments
           if (keyframe_count_ > 20) {
             y0_lidar = ConstructGICPConstraints(H, b);
           }
@@ -148,17 +168,21 @@ bool LIO::StepOptimize(const SensorMeasurement& sensor_measurement,
         },
         "lidar constraints");
 
+    std::cout << "[StepOptimize] lidar constraints done"
+              << " y0_lidar=" << y0_lidar
+              << " effect_feat_num=" << effect_feat_num_
+              << " H_norm=" << H.norm()
+              << " b_norm=" << b.norm() << std::endl;
+
     y0 += y0_lidar;
     break;
   }
 
   default: {
-    LOG(ERROR) << "error measurement type!";
+    std::cout << "[StepOptimize] error measurement type!" << std::endl;
     exit(0);
   }
   }
-
-  // LOG(INFO) << "lidar H: " << std::endl << H << std::endl;
 
   timer.Evaluate(
       [&, this]() {
@@ -167,7 +191,24 @@ bool LIO::StepOptimize(const SensorMeasurement& sensor_measurement,
       },
       "imu constraint");
 
+  std::cout << "[StepOptimize] imu constraints done"
+            << " y0=" << y0
+            << " H_norm=" << H.norm()
+            << " b_norm=" << b.norm() << std::endl;
+
+  std::cout << "[StepOptimize] before GNStep"
+            << " H00=" << H(0, 0)
+            << " b0=" << b(0, 0)
+            << " b_norm=" << b.norm()
+            << std::endl;
+
   GNStep(sensor_measurement, H, b, y0, delta_x);
+
+  std::cout << "[StepOptimize] after GNStep"
+            << " delta_x=" << delta_x.transpose()
+            << " delta_x_inf=" << delta_x.lpNorm<Eigen::Infinity>()
+            << " curr_state_pos=" << curr_state_.pose.block<3, 1>(0, 3).transpose()
+            << std::endl;
 
   return true;
 }
@@ -187,7 +228,6 @@ bool LIO::GNStep(const SensorMeasurement& sensor_measurement,
         delta_x = dir;
         CorrectState(curr_state_, delta_x, new_state);
         curr_state_ = new_state;
-
         final_hessian_ = H;
       },
       "gn step");
@@ -421,10 +461,18 @@ double LIO::ConstructGICPConstraints(Eigen::Matrix<double, 15, 15>& H,
 
 double LIO::ConstructPoint2PlaneConstraints(Eigen::Matrix<double, 15, 15>& H,
                                             Eigen::Matrix<double, 15, 1>& b) {
+  // Thread-local correspondence list used during the KNN reduction.
+  // We use std::vector inside the reduction and assign back to
+  // correspondences_array_ (tbb::concurrent_vector) via range-assign at the end.
+  using ReduceResult = std::pair<Eigen::Matrix<double, 8, 6>,
+                                 std::vector<std::shared_ptr<Correspondence>>>;
+
   Eigen::Matrix<double, 8, 6> result_matrix =
       Eigen::Matrix<double, 8, 6>::Zero();
   Eigen::Matrix<double, 8, 6> init_matrix = Eigen::Matrix<double, 8, 6>::Zero();
 
+  std::cout << "[P2Plane][converge] corr_size=" << correspondences_array_.size() 
+          << " need_converge=" << need_converge_ << std::endl;
   // Skip the KNN to accelerate convergence
   if (need_converge_) {
     result_matrix = tbb::parallel_reduce(
@@ -481,13 +529,21 @@ double LIO::ConstructPoint2PlaneConstraints(Eigen::Matrix<double, 15, 15>& H,
     return result_matrix(7, 0);
   }
 
+  // ── KNN path ────────────────────────────────────────────────────────────────
+  // Correspondences are accumulated into thread-local std::vectors inside the
+  // reduction body, then merged in the combine lambda. This avoids concurrent
+  // writes to the shared correspondences_array_ (a tbb::concurrent_vector).
+  // After the reduction we assign back via the range constructor.
+
   size_t N = cloud_cov_ptr_->size();
   correspondences_array_.clear();
-  result_matrix = tbb::parallel_reduce(
+
+  ReduceResult init_result = {init_matrix, {}};
+
+  ReduceResult final_result = tbb::parallel_reduce(
       tbb::blocked_range<size_t>(0, N),
-      init_matrix,
-      [&, this](tbb::blocked_range<size_t> r,
-                Eigen::Matrix<double, 8, 6> local_result) {
+      init_result,
+      [&, this](tbb::blocked_range<size_t> r, ReduceResult local) {
         for (size_t i = r.begin(); i < r.end(); ++i) {
           const Eigen::Vector3d p =
               cloud_cov_ptr_->points[i].getVector3fMap().cast<double>();
@@ -510,9 +566,10 @@ double LIO::ConstructPoint2PlaneConstraints(Eigen::Matrix<double, 15, 15>& H,
                   std::make_shared<Correspondence>();
               corr_ptr->mean_A = p;
               corr_ptr->plane_coeff = plane_coeff;
-              correspondences_array_.emplace_back(corr_ptr);
+              // Thread-local push — no data race
+              local.second.emplace_back(corr_ptr);
 
-              local_result(7, 0) +=
+              local.first(7, 0) +=
                   config_.point2plane_constraint_gain * error * error;
 
               // The residual takes the partial derivative of the state
@@ -527,22 +584,32 @@ double LIO::ConstructPoint2PlaneConstraints(Eigen::Matrix<double, 15, 15>& H,
               // The residual takes the partial derivative of position
               dres_dx.block<1, 3>(0, 3) = plane_coeff.head(3).transpose();
 
-              local_result.block(0, 0, 6, 6) +=
+              local.first.block(0, 0, 6, 6) +=
                   config_.point2plane_constraint_gain * dres_dx.transpose() *
                   dres_dx;
 
-              local_result.block(6, 0, 1, 6) +=
+              local.first.block(6, 0, 1, 6) +=
                   config_.point2plane_constraint_gain * dres_dx * error;
             }
           }
         }
 
-        return local_result;
+        return local;
       },
-      [](Eigen::Matrix<double, 8, 6> x, Eigen::Matrix<double, 8, 6> y) {
-        return x + y;
+      [](ReduceResult a, const ReduceResult& b) {
+        // Merge matrices
+        a.first += b.first;
+        // Merge thread-local correspondence lists
+        a.second.insert(a.second.end(),
+                        std::make_move_iterator(b.second.begin()),
+                        std::make_move_iterator(b.second.end()));
+        return a;
       });
 
+  result_matrix = final_result.first;
+  // Assign back to tbb::concurrent_vector via range constructor
+  correspondences_array_.assign(final_result.second.begin(),
+                                final_result.second.end());
   effect_feat_num_ = correspondences_array_.size();
 
   H.block<6, 6>(IndexErrorOri, IndexErrorOri) +=
@@ -566,8 +633,6 @@ double LIO::ConstructImuPriorConstraints(Eigen::Matrix<double, 15, 15>& H,
       Eigen::Matrix<double, 15, 15>::Identity();
   jacobian.block<3, 3>(IndexErrorOri, IndexErrorOri) = right_jacoiban_inv;
 
-  // LOG(INFO) << "imu jacobian: " << std::endl << jacobian;
-
   Eigen::Matrix<double, 15, 1> residual = Eigen::Matrix<double, 15, 1>::Zero();
   residual.block<3, 1>(IndexErrorOri, 0) = ori_error;
   residual.block<3, 1>(IndexErrorPos, 0) =
@@ -584,7 +649,6 @@ double LIO::ConstructImuPriorConstraints(Eigen::Matrix<double, 15, 15>& H,
   b += jacobian.transpose() * inv_P * residual;
 
   double errors = residual.transpose() * inv_P * residual;
-
   return errors;
 }
 
@@ -592,6 +656,8 @@ bool LIO::Predict(const double time,
                   const Eigen::Vector3d& acc_1,
                   const Eigen::Vector3d& gyr_1) {
   double dt = time - lio_time_;
+
+//   std::cout << "dt = " << dt << "and time = " << time << "and lio_time = " << lio_time_ << std::endl;
 
   Eigen::Vector3d un_acc = Eigen::Vector3d::Zero();
   Eigen::Vector3d un_gyr = Eigen::Vector3d::Zero();
@@ -909,7 +975,7 @@ bool LIO::StaticInitialization(SensorMeasurement& sensor_measurement) {
   Q_.block<3, 3>(IndexNoiseBiasGyr, IndexNoiseBiasGyr) =
       config_.bg_cov * Eigen::Matrix3d::Identity();
 
-  lio_time_ = sensor_measurement.imu_buff_.back().header.stamp.toSec();
+  lio_time_ = rclcpp::Time(sensor_measurement.imu_buff_.back().header.stamp).seconds();
   lio_init_ = true;
 
 //  LOG(INFO) << "imu static, mean_acc_: " << mean_acc_.transpose()
@@ -973,7 +1039,7 @@ bool LIO::AHRSInitialization(SensorMeasurement& sensor_measurement) {
   Q_.block<3, 3>(IndexNoiseBiasGyr, IndexNoiseBiasGyr) =
       config_.bg_cov * Eigen::Matrix3d::Identity();
 
-  lio_time_ = sensor_measurement.imu_buff_.back().header.stamp.toSec();
+  lio_time_ = rclcpp::Time(sensor_measurement.imu_buff_.back().header.stamp).seconds();
   lio_init_ = true;
 
   return true;

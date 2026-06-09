@@ -7,16 +7,13 @@
 #ifndef POINTCLOUD_PREPROCESS_H_
 #define POINTCLOUD_PREPROCESS_H_
 
-#include <ros/ros.h>
-#include <sensor_msgs/PointCloud2.h>
-
+#include <sensor_msgs/msg/point_cloud2.hpp>   // ROS2 message
 #include <glog/logging.h>
-
 #include <pcl_conversions/pcl_conversions.h>
 
 #include "point_type.h"
 
-enum class LidarType { VELODYNE, OUSTER, HESAI, VELODYNEM1600};
+enum class LidarType { VELODYNE, OUSTER, HESAI, VELODYNEM1600 };
 
 // for Velodyne LiDAR
 struct VelodynePointXYZIRT {
@@ -30,27 +27,25 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(
     VelodynePointXYZIRT,
     (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(
         uint16_t, ring, ring)(float, time, t))
+
 struct VelodyneM1600PointXYZIRT {
   PCL_ADD_POINT4D;
   uint8_t intensity;
   uint8_t ring;
   uint32_t timestampSec;
   uint32_t timestampNsec;
-  
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 } EIGEN_ALIGN16;
 POINT_CLOUD_REGISTER_POINT_STRUCT(
     VelodyneM1600PointXYZIRT,
     (float, x, x)(float, y, y)(float, z, z)(uint8_t, intensity, intensity)(
         uint8_t, ring, ring)(uint32_t, timestampSec, timestampSec)(uint32_t, timestampNsec, timestampNsec))
-        
 
 struct HesaiPointXYZIRT {
   PCL_ADD_POINT4D;
   float intensity;
   double timestamp;
   uint16_t ring;
-  // Add any additional fields specific to Hesai LiDAR
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 } EIGEN_ALIGN16;
 POINT_CLOUD_REGISTER_POINT_STRUCT(
@@ -74,21 +69,6 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(
     (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(
         uint32_t, t, t)(uint16_t, reflectivity, reflectivity)(
         uint16_t, ring, ring)(uint16_t, noise, ambient)(uint32_t, range, range))
-// struct OusterPointXYZIRT {
-//   PCL_ADD_POINT4D;
-//   float intensity;
-//   double timestamp;
-//   uint16_t reflectivity;
-//   uint8_t ring;
-//   uint16_t noise;
-//   uint32_t range;
-//   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-// } EIGEN_ALIGN16;
-// POINT_CLOUD_REGISTER_POINT_STRUCT(
-//     OusterPointXYZIRT,
-//     (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(
-//         double, timestamp, timestamp)(uint16_t, reflectivity, reflectivity)(
-//         uint8_t, ring, ring)(uint16_t, noise, noise)(uint32_t, range, range))
 
 class PointCloudPreprocess {
  public:
@@ -98,7 +78,6 @@ class PointCloudPreprocess {
 
     int point_filter_num{4};
     LidarType lidar_type = LidarType::VELODYNE;
-    // only use for velodyne
     double time_scale{1000.0};
   };
 
@@ -109,7 +88,8 @@ class PointCloudPreprocess {
 
   ~PointCloudPreprocess() = default;
 
-  void Process(const sensor_msgs::PointCloud2::ConstPtr& msg,
+  // ROS2: use SharedPtr (const reference for efficiency)
+  void Process(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg,
                pcl::PointCloud<PointType>::Ptr& cloud_out);
 
  private:
@@ -122,14 +102,13 @@ class PointCloudPreprocess {
   template <typename T>
   bool IsNear(const T& p1, const T& p2);
 
-  void ProcessVelodyne(const sensor_msgs::PointCloud2::ConstPtr& msg,
+  void ProcessVelodyne(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg,
                        pcl::PointCloud<PointType>::Ptr& cloud_out);
-  void ProcessVelodyneM1600(const sensor_msgs::PointCloud2::ConstPtr& msg,
-                       pcl::PointCloud<PointType>::Ptr& cloud_out);
-  void ProcessHesai(const sensor_msgs::PointCloud2::ConstPtr& msg,
-                  pcl::PointCloud<PointType>::Ptr& cloud_out);
-
-  void ProcessOuster(const sensor_msgs::PointCloud2::ConstPtr& msg,
+  void ProcessVelodyneM1600(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg,
+                            pcl::PointCloud<PointType>::Ptr& cloud_out);
+  void ProcessHesai(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg,
+                    pcl::PointCloud<PointType>::Ptr& cloud_out);
+  void ProcessOuster(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg,
                      pcl::PointCloud<PointType>::Ptr& cloud_out);
 
   int num_scans_ = 128;

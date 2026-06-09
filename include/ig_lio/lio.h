@@ -10,7 +10,8 @@
 #include <deque>
 #include <numeric>
 
-#include <sensor_msgs/Imu.h>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/imu.hpp>
 
 #include <glog/logging.h>
 
@@ -41,7 +42,7 @@ struct SensorMeasurement {
   // The time of the last laser point in the scan
   double lidar_end_time_{0.0};
   CloudPtr cloud_ptr_{};
-  std::deque<sensor_msgs::Imu> imu_buff_;
+  std::deque<sensor_msgs::msg::Imu> imu_buff_;
 
   Eigen::Matrix4d gnss_pose_ = Eigen::Matrix4d::Identity();
   GNSSStatus gnss_status_ = GNSSStatus::NONE;
@@ -125,6 +126,8 @@ class LIO {
   size_t GetFinalIterations() { return iter_num_; }
 
   Eigen::Matrix<double, 15, 15> GetCovariance() const { return P_; }
+
+  double GetLioTime() const { return lio_time_; }
 
  private:
   static constexpr int IndexErrorOri{0};
