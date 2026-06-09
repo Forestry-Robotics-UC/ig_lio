@@ -5,6 +5,12 @@ ig_lio_node:
     imu_topic: "/ouster/imu"
     lidar_type: "ouster"
 
+    # Subscription QoS reliability: "best_effort" (default) matches both
+    # best_effort and reliable publishers; "reliable" only matches reliable
+    # publishers but guarantees delivery. Check a bag with:
+    #   ros2 topic info -v <topic>   (look at the Reliability line)
+    qos_reliability: "best_effort"
+
     min_radius: 1.0
     max_radius: 30.0
     point_filter_num: 5
@@ -25,8 +31,8 @@ ig_lio_node:
     gicp_constraints_gain: 100.0
     point2plane_constraints_gain: 1000.0
 
-    enable_undistort: false
-    enable_outlier_rejection: false
+    enable_undistort: true
+    enable_outlier_rejection: true
 
     gravity: 9.80665
 

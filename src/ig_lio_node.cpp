@@ -342,115 +342,115 @@ void Process()
   timer.Evaluate([&] { lio_ptr->MeasurementUpdate(sensor_measurement); },
                  "measurement update");
 
-  // // Step 5: Publish to RViz
-  // Eigen::Matrix4d result_pose = lio_ptr->GetCurrentPose();
-  // Eigen::Matrix<double, 15, 15> P = lio_ptr->GetCovariance();
+  // Step 5: Publish to RViz
+  Eigen::Matrix4d result_pose = lio_ptr->GetCurrentPose();
+  Eigen::Matrix<double, 15, 15> P = lio_ptr->GetCovariance();
 
-  // rclcpp::Time stamp(
-  //     static_cast<int64_t>(sensor_measurement.lidar_end_time_ * 1e9));
+  rclcpp::Time stamp(
+      static_cast<int64_t>(sensor_measurement.lidar_end_time_ * 1e9));
 
-  // // Odometry message
-  // nav_msgs::msg::Odometry odom_msg;
-  // odom_msg.header.frame_id = "odom";
-  // odom_msg.child_frame_id = "base_link";
-  // odom_msg.header.stamp = stamp;
-  // Eigen::Quaterniond temp_q(result_pose.block<3, 3>(0, 0));
-  // odom_msg.pose.pose.orientation.x = temp_q.x();
-  // odom_msg.pose.pose.orientation.y = temp_q.y();
-  // odom_msg.pose.pose.orientation.z = temp_q.z();
-  // odom_msg.pose.pose.orientation.w = temp_q.w();
-  // odom_msg.pose.pose.position.x = result_pose(0, 3);
-  // odom_msg.pose.pose.position.y = result_pose(1, 3);
-  // odom_msg.pose.pose.position.z = result_pose(2, 3);
+  // Odometry message
+  nav_msgs::msg::Odometry odom_msg;
+  odom_msg.header.frame_id = "odom";
+  odom_msg.child_frame_id = "base_link";
+  odom_msg.header.stamp = stamp;
+  Eigen::Quaterniond temp_q(result_pose.block<3, 3>(0, 0));
+  odom_msg.pose.pose.orientation.x = temp_q.x();
+  odom_msg.pose.pose.orientation.y = temp_q.y();
+  odom_msg.pose.pose.orientation.z = temp_q.z();
+  odom_msg.pose.pose.orientation.w = temp_q.w();
+  odom_msg.pose.pose.position.x = result_pose(0, 3);
+  odom_msg.pose.pose.position.y = result_pose(1, 3);
+  odom_msg.pose.pose.position.z = result_pose(2, 3);
 
-  // // Covariance: ig-lio P_ order is Ori(0-2), Pos(3-5), Vel(6-8), Ba(9-11), Bg(12-14)
-  // for (int i = 0; i < 3; i++) {
-  //   for (int j = 0; j < 3; j++) {
-  //     odom_msg.pose.covariance[(i) * 6 + (j)]     = P(3 + i, 3 + j);  // pos-pos
-  //     odom_msg.pose.covariance[(i) * 6 + (j + 3)] = P(3 + i, j);      // pos-ori
-  //     odom_msg.pose.covariance[(i + 3) * 6 + (j)] = P(i, 3 + j);      // ori-pos
-  //     odom_msg.pose.covariance[(i + 3) * 6 + (j + 3)] = P(i, j);      // ori-ori
-  //     odom_msg.twist.covariance[(i) * 6 + (j)]    = P(6 + i, 6 + j);  // vel-vel
-  //   }
-  // }
-  // odom_pub->publish(odom_msg);
+  // Covariance: ig-lio P_ order is Ori(0-2), Pos(3-5), Vel(6-8), Ba(9-11), Bg(12-14)
+  for (int i = 0; i < 3; i++) {
+    for (int j = 0; j < 3; j++) {
+      odom_msg.pose.covariance[(i) * 6 + (j)]     = P(3 + i, 3 + j);  // pos-pos
+      odom_msg.pose.covariance[(i) * 6 + (j + 3)] = P(3 + i, j);      // pos-ori
+      odom_msg.pose.covariance[(i + 3) * 6 + (j)] = P(i, 3 + j);      // ori-pos
+      odom_msg.pose.covariance[(i + 3) * 6 + (j + 3)] = P(i, j);      // ori-ori
+      odom_msg.twist.covariance[(i) * 6 + (j)]    = P(6 + i, 6 + j);  // vel-vel
+    }
+  }
+  odom_pub->publish(odom_msg);
 
-  // // TF broadcast
-  // geometry_msgs::msg::TransformStamped tf_msg;
-  // tf_msg.header.stamp = stamp;
-  // tf_msg.header.frame_id = "odom";
-  // tf_msg.child_frame_id = "base_link";
-  // tf_msg.transform.translation.x = result_pose(0, 3);
-  // tf_msg.transform.translation.y = result_pose(1, 3);
-  // tf_msg.transform.translation.z = result_pose(2, 3);
-  // tf_msg.transform.rotation.x = temp_q.x();
-  // tf_msg.transform.rotation.y = temp_q.y();
-  // tf_msg.transform.rotation.z = temp_q.z();
-  // tf_msg.transform.rotation.w = temp_q.w();
-  // tf_broadcaster->sendTransform(tf_msg);
+  // TF broadcast
+  geometry_msgs::msg::TransformStamped tf_msg;
+  tf_msg.header.stamp = stamp;
+  tf_msg.header.frame_id = "odom";
+  tf_msg.child_frame_id = "base_link";
+  tf_msg.transform.translation.x = result_pose(0, 3);
+  tf_msg.transform.translation.y = result_pose(1, 3);
+  tf_msg.transform.translation.z = result_pose(2, 3);
+  tf_msg.transform.rotation.x = temp_q.x();
+  tf_msg.transform.rotation.y = temp_q.y();
+  tf_msg.transform.rotation.z = temp_q.z();
+  tf_msg.transform.rotation.w = temp_q.w();
+  tf_broadcaster->sendTransform(tf_msg);
 
-  // // Publish dense scan (transformed to odom frame)
-  // CloudPtr trans_cloud(new CloudType());
-  // pcl::transformPointCloud(
-  //     *sensor_measurement.cloud_ptr_, *trans_cloud, result_pose);
-  // sensor_msgs::msg::PointCloud2 scan_msg;
-  // pcl::toROSMsg(*trans_cloud, scan_msg);
-  // scan_msg.header.frame_id = "odom";
-  // scan_msg.header.stamp = stamp;
-  // current_scan_pub->publish(scan_msg);
+  // Publish dense scan (transformed to odom frame)
+  CloudPtr trans_cloud(new CloudType());
+  pcl::transformPointCloud(
+      *sensor_measurement.cloud_ptr_, *trans_cloud, result_pose);
+  sensor_msgs::msg::PointCloud2 scan_msg;
+  pcl::toROSMsg(*trans_cloud, scan_msg);
+  scan_msg.header.frame_id = "odom";
+  scan_msg.header.stamp = stamp;
+  current_scan_pub->publish(scan_msg);
 
-  // // Publish keyframe path and downsampled scan
-  // static bool is_first_keyframe = true;
-  // static Eigen::Matrix4d last_keyframe = result_pose;
-  // Eigen::Matrix4d delta_p = last_keyframe.inverse() * result_pose;
-  // if (is_first_keyframe ||
-  //     delta_p.block<3, 1>(0, 3).norm() > 1.0 ||
-  //     Sophus::SO3d(delta_p.block<3, 3>(0, 0)).log().norm() > 0.18)
-  // {
-  //   if (is_first_keyframe) is_first_keyframe = false;
-  //   last_keyframe = result_pose;
+  // Publish keyframe path and downsampled scan
+  static bool is_first_keyframe = true;
+  static Eigen::Matrix4d last_keyframe = result_pose;
+  Eigen::Matrix4d delta_p = last_keyframe.inverse() * result_pose;
+  if (is_first_keyframe ||
+      delta_p.block<3, 1>(0, 3).norm() > 1.0 ||
+      Sophus::SO3d(delta_p.block<3, 3>(0, 0)).log().norm() > 0.18)
+  {
+    if (is_first_keyframe) is_first_keyframe = false;
+    last_keyframe = result_pose;
 
-  //   CloudPtr cloud_DS(new CloudType());
-  //   voxel_filter.setInputCloud(sensor_measurement.cloud_ptr_);
-  //   voxel_filter.filter(*cloud_DS);
-  //   CloudPtr trans_cloud_DS(new CloudType());
-  //   pcl::transformPointCloud(*cloud_DS, *trans_cloud_DS, result_pose);
-  //   sensor_msgs::msg::PointCloud2 keyframe_scan_msg;
-  //   pcl::toROSMsg(*trans_cloud_DS, keyframe_scan_msg);
-  //   keyframe_scan_msg.header.frame_id = "odom";
-  //   keyframe_scan_msg.header.stamp = stamp;
-  //   keyframe_scan_pub->publish(keyframe_scan_msg);
+    CloudPtr cloud_DS(new CloudType());
+    voxel_filter.setInputCloud(sensor_measurement.cloud_ptr_);
+    voxel_filter.filter(*cloud_DS);
+    CloudPtr trans_cloud_DS(new CloudType());
+    pcl::transformPointCloud(*cloud_DS, *trans_cloud_DS, result_pose);
+    sensor_msgs::msg::PointCloud2 keyframe_scan_msg;
+    pcl::toROSMsg(*trans_cloud_DS, keyframe_scan_msg);
+    keyframe_scan_msg.header.frame_id = "odom";
+    keyframe_scan_msg.header.stamp = stamp;
+    keyframe_scan_pub->publish(keyframe_scan_msg);
 
-  //   path_array.header.stamp = stamp;
-  //   path_array.header.frame_id = "odom";
-  //   geometry_msgs::msg::PoseStamped pose_stamped;
-  //   pose_stamped.header.stamp = stamp;
-  //   pose_stamped.header.frame_id = "odom";
-  //   pose_stamped.pose.position.x = result_pose(0, 3);
-  //   pose_stamped.pose.position.y = result_pose(1, 3);
-  //   pose_stamped.pose.position.z = result_pose(2, 3);
-  //   pose_stamped.pose.orientation.w = temp_q.w();
-  //   pose_stamped.pose.orientation.x = temp_q.x();
-  //   pose_stamped.pose.orientation.y = temp_q.y();
-  //   pose_stamped.pose.orientation.z = temp_q.z();
-  //   path_array.poses.push_back(pose_stamped);
-  //   path_pub->publish(path_array);
-  // }
+    path_array.header.stamp = stamp;
+    path_array.header.frame_id = "odom";
+    geometry_msgs::msg::PoseStamped pose_stamped;
+    pose_stamped.header.stamp = stamp;
+    pose_stamped.header.frame_id = "odom";
+    pose_stamped.pose.position.x = result_pose(0, 3);
+    pose_stamped.pose.position.y = result_pose(1, 3);
+    pose_stamped.pose.position.z = result_pose(2, 3);
+    pose_stamped.pose.orientation.w = temp_q.w();
+    pose_stamped.pose.orientation.x = temp_q.x();
+    pose_stamped.pose.orientation.y = temp_q.y();
+    pose_stamped.pose.orientation.z = temp_q.z();
+    path_array.poses.push_back(pose_stamped);
+    path_pub->publish(path_array);
+  }
 
-  // // Step 6: Save trajectory for evo evaluation
-  // static size_t delay_count = 0;
-  // if (delay_count > 50) {
-  //   Eigen::Matrix4d lio_pose = result_pose;
-  //   Eigen::Quaterniond lio_q(lio_pose.block<3, 3>(0, 0));
-  //   odom_stream << std::fixed << std::setprecision(6)
-  //               << sensor_measurement.lidar_end_time_ << " "
-  //               << std::setprecision(15)
-  //               << lio_pose(0, 3) << " " << lio_pose(1, 3) << " " << lio_pose(2, 3)
-  //               << " " << lio_q.x() << " " << lio_q.y() << " " << lio_q.z()
-  //               << " " << lio_q.w() << std::endl;
-  // } else {
-  //   delay_count++;
-  // }
+  // Step 6: Save trajectory for evo evaluation
+  static size_t delay_count = 0;
+  if (delay_count > 50) {
+    Eigen::Matrix4d lio_pose = result_pose;
+    Eigen::Quaterniond lio_q(lio_pose.block<3, 3>(0, 0));
+    odom_stream << std::fixed << std::setprecision(6)
+                << sensor_measurement.lidar_end_time_ << " "
+                << std::setprecision(15)
+                << lio_pose(0, 3) << " " << lio_pose(1, 3) << " " << lio_pose(2, 3)
+                << " " << lio_q.x() << " " << lio_q.y() << " " << lio_q.z()
+                << " " << lio_q.w() << std::endl;
+  } else {
+    delay_count++;
+  }
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -481,12 +481,34 @@ int main(int argc, char** argv)
       ament_index_cpp::get_package_share_directory("ig_lio");
   Logger logger(clean_argc, clean_argv.data(), package_path);
 
+  // ── QoS reliability (matches whatever the bag/driver offers) ─────────────────
+  // best_effort (default) subscribers match BOTH best_effort and reliable
+  // publishers, so this works across bags without recompiling. Set to
+  // "reliable" only when you specifically want guaranteed delivery from a
+  // reliable publisher. A reliable subscriber will NOT connect to a
+  // best_effort publisher.
+  std::string qos_reliability;
+  g_node->declare_parameter<std::string>("qos_reliability", "best_effort");
+  g_node->get_parameter("qos_reliability", qos_reliability);
+  const bool use_reliable = (qos_reliability == "reliable");
+  if (!use_reliable && qos_reliability != "best_effort") {
+    LOG(WARNING) << "Unknown qos_reliability '" << qos_reliability
+                 << "', falling back to best_effort";
+  }
+  auto apply_reliability = [use_reliable](rclcpp::QoS qos) {
+    return use_reliable ? qos.reliable() : qos.best_effort();
+  };
+  LOG(INFO) << "QoS reliability: "
+            << (use_reliable ? "reliable" : "best_effort");
+
   // ── Subscribe: IMU ──────────────────────────────────────────────────────────
   std::string imu_topic;
   g_node->declare_parameter<std::string>("imu_topic", "/imu/data");
   g_node->get_parameter("imu_topic", imu_topic);
+  // IMU: deep queue so a stalled loop buffers instead of dropping
+  auto imu_qos = apply_reliability(rclcpp::QoS(rclcpp::KeepLast(2000)));
   auto imu_sub = g_node->create_subscription<sensor_msgs::msg::Imu>(
-    imu_topic, rclcpp::SensorDataQoS(), ImuCallBack);
+      imu_topic, imu_qos, ImuCallBack);
 
   // ── Subscribe: LiDAR ────────────────────────────────────────────────────────
   std::string lidar_topic, lidar_type_string;
@@ -508,8 +530,10 @@ int main(int argc, char** argv)
     return 1;
   }
 
+  // LiDAR: depth 10; clouds are big & low-rate
+  auto lidar_qos = apply_reliability(rclcpp::QoS(rclcpp::KeepLast(10)));
   auto cloud_sub = g_node->create_subscription<sensor_msgs::msg::PointCloud2>(
-    lidar_topic, rclcpp::SensorDataQoS(), CloudCallBack);
+      lidar_topic, lidar_qos, CloudCallBack);
 
   // ── Parameters: point-cloud pre-processing ──────────────────────────────────
   double time_scale;

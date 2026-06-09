@@ -34,7 +34,6 @@ void PointCloudPreprocess::ProcessVelodyne(
   pcl::PointCloud<VelodynePointXYZIRT> cloud_origin;
   pcl::fromROSMsg(*msg, cloud_origin);
 
-  int plsize = cloud_origin.size();
   double omega_l = 3.61;
   std::vector<bool> is_first(num_scans_, true);
   std::vector<double> yaw_fp(num_scans_, 0.0);
@@ -45,17 +44,6 @@ void PointCloudPreprocess::ProcessVelodyne(
   } else {
     LOG(INFO) << "origin cloud has not timestamp";
     has_time_ = false;
-    double yaw_first =
-        atan2(cloud_origin.points[0].y, cloud_origin.points[0].x) * 57.29578;
-    double yaw_end = yaw_first;
-    int layer_first = cloud_origin.points[0].ring;
-    for (uint i = plsize - 1; i > 0; i--) {
-      if (cloud_origin.points[i].ring == layer_first) {
-        yaw_end = atan2(cloud_origin.points[i].y, cloud_origin.points[i].x) *
-                  57.29578;
-        break;
-      }
-    }
   }
 
   cloud_out->reserve(cloud_origin.size());

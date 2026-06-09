@@ -37,8 +37,6 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
         },
         "undistort");
 
-    std::cout << "cloud after undistort = " << *sensor_measurement.cloud_ptr_ << std::endl;
-
     timer.Evaluate(
         [&, this]() {
           fast_voxel_grid_ptr_->Filter(
@@ -46,10 +44,6 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
         },
         "downsample");
   }
-
-  std::cout << "cloud after downsample = " << *sensor_measurement.cloud_ptr_ << std::endl;
-
-  std::cout << "lidar_frame_count_: " << lidar_frame_count_ << std::endl;
 
   // Make sure the local map is dense enought to measurement update
   if (lidar_frame_count_ <= 10) {
@@ -60,8 +54,6 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
     lidar_frame_count_++;
     return true;
   }
-
-  std::cout << "cloud after transform = " << *sensor_measurement.cloud_ptr_ << std::endl;
 
   // measurement update
   prev_state_ = curr_state_;
@@ -86,9 +78,6 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
 
     iter_num_++;
   }
-
-  std::cout << "final hessian: " << std::endl << final_hessian_;
-//   P_ = final_hessian_.inverse();
 
   ComputeFinalCovariance(delta_x);
   prev_state_ = curr_state_;
@@ -127,11 +116,6 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
 
   ava_effect_feat_num_ += (effect_feat_num_ - ava_effect_feat_num_) /
                           static_cast<double>(lidar_frame_count_);
- std::cout << "curr_feat_num: " << effect_feat_num_
-           << " ava_feat_num: " << ava_effect_feat_num_
-           << " keyframe_count: " << keyframe_count_
-           << " lidar_frame_count: " << lidar_frame_count_
-           << " grid_size: " << voxel_map_ptr_->GetVoxelMapSize();
   return true;
 }
 
@@ -141,13 +125,6 @@ bool LIO::StepOptimize(const SensorMeasurement& sensor_measurement,
   Eigen::Matrix<double, 15, 1> b = Eigen::Matrix<double, 15, 1>::Zero();
 
   double y0 = 0;
-
-  std::cout << "[StepOptimize] start"
-            << " measurement_type=" << static_cast<int>(sensor_measurement.measurement_type_)
-            << " cloud_size="
-            << (sensor_measurement.cloud_ptr_ ? sensor_measurement.cloud_ptr_->size() : 0)
-            << " imu_buf_size=" << sensor_measurement.imu_buff_.size()
-            << " keyframe_count=" << keyframe_count_ << std::endl;
 
   switch (sensor_measurement.measurement_type_) {
   case MeasurementType::LIDAR: {
@@ -168,18 +145,12 @@ bool LIO::StepOptimize(const SensorMeasurement& sensor_measurement,
         },
         "lidar constraints");
 
-    std::cout << "[StepOptimize] lidar constraints done"
-              << " y0_lidar=" << y0_lidar
-              << " effect_feat_num=" << effect_feat_num_
-              << " H_norm=" << H.norm()
-              << " b_norm=" << b.norm() << std::endl;
-
     y0 += y0_lidar;
     break;
   }
 
   default: {
-    std::cout << "[StepOptimize] error measurement type!" << std::endl;
+    LOG(ERROR) << "error measurement type!";
     exit(0);
   }
   }
@@ -191,24 +162,7 @@ bool LIO::StepOptimize(const SensorMeasurement& sensor_measurement,
       },
       "imu constraint");
 
-  std::cout << "[StepOptimize] imu constraints done"
-            << " y0=" << y0
-            << " H_norm=" << H.norm()
-            << " b_norm=" << b.norm() << std::endl;
-
-  std::cout << "[StepOptimize] before GNStep"
-            << " H00=" << H(0, 0)
-            << " b0=" << b(0, 0)
-            << " b_norm=" << b.norm()
-            << std::endl;
-
   GNStep(sensor_measurement, H, b, y0, delta_x);
-
-  std::cout << "[StepOptimize] after GNStep"
-            << " delta_x=" << delta_x.transpose()
-            << " delta_x_inf=" << delta_x.lpNorm<Eigen::Infinity>()
-            << " curr_state_pos=" << curr_state_.pose.block<3, 1>(0, 3).transpose()
-            << std::endl;
 
   return true;
 }
@@ -237,387 +191,194 @@ bool LIO::GNStep(const SensorMeasurement& sensor_measurement,
 
 double LIO::ConstructGICPConstraints(Eigen::Matrix<double, 15, 15>& H,
                                      Eigen::Matrix<double, 15, 1>& b) {
-  Eigen::Matrix<double, 8, 6> result_matrix =
-      Eigen::Matrix<double, 8, 6>::Zero();
-  Eigen::Matrix<double, 8, 6> init_matrix = Eigen::Matrix<double, 8, 6>::Zero();
+  // ── Phase 1: correspondence search (parallel) ───────────────────────────────
+  // Skipped in skip-KNN mode (need_converge_); reuse existing correspondences.
+  if (!need_converge_) {
+    const size_t delta_p_size = voxel_map_ptr_->delta_P_.size();
+    const size_t N = cloud_cov_ptr_->size();
+    correspondences_array_.clear();
 
-  if (need_converge_) {
-    result_matrix = tbb::parallel_reduce(
-        tbb::blocked_range<size_t>(0, correspondences_array_.size()),
-        init_matrix,
-        [&, this](tbb::blocked_range<size_t> r,
-                  Eigen::Matrix<double, 8, 6> local_result) {
+    tbb::parallel_for(
+        tbb::blocked_range<size_t>(0, N),
+        [&, this](const tbb::blocked_range<size_t>& r) {
           for (size_t i = r.begin(); i < r.end(); ++i) {
-            Eigen::Vector3d trans_mean_A =
-                curr_state_.pose.block<3, 3>(0, 0) *
-                    correspondences_array_[i]->mean_A +
+            const PointCovType& point_cov = cloud_cov_ptr_->points[i];
+            const Eigen::Vector3d mean_A =
+                point_cov.getVector3fMap().cast<double>();
+            const Eigen::Vector3d trans_mean_A =
+                curr_state_.pose.block<3, 3>(0, 0) * mean_A +
                 curr_state_.pose.block<3, 1>(0, 3);
 
-            Eigen::Vector3d error =
-                correspondences_array_[i]->mean_B - trans_mean_A;
+            Eigen::Matrix3d cov_A;
+            cov_A << point_cov.cov[0], point_cov.cov[1], point_cov.cov[2],
+                point_cov.cov[1], point_cov.cov[3], point_cov.cov[4],
+                point_cov.cov[2], point_cov.cov[4], point_cov.cov[5];
 
-            // without loss function
-            // local_result(7, 0) += gicp_constraint_gain_ * error.transpose() *
-            //                       correspondences_array_[i]->mahalanobis *
-            //                       error;
+            Eigen::Vector3d mean_B = Eigen::Vector3d::Zero();
+            Eigen::Matrix3d cov_B = Eigen::Matrix3d::Zero();
 
-            // // The residual takes the partial derivative of the state
-            // Eigen::Matrix<double, 3, 6> dres_dx =
-            //     Eigen::Matrix<double, 3, 6>::Zero();
+            for (size_t j = 0; j < delta_p_size; ++j) {
+              Eigen::Vector3d nearby_point =
+                  trans_mean_A + voxel_map_ptr_->delta_P_[j];
+              size_t hash_idx = voxel_map_ptr_->ComputeHashIndex(nearby_point);
+              if (voxel_map_ptr_->GetCentroidAndCovariance(hash_idx, mean_B,
+                                                           cov_B) &&
+                  voxel_map_ptr_->IsSameGrid(nearby_point, mean_B)) {
+                Eigen::Matrix3d mahalanobis =
+                    (cov_B +
+                     curr_state_.pose.block<3, 3>(0, 0) * cov_A *
+                         curr_state_.pose.block<3, 3>(0, 0).transpose() +
+                     Eigen::Matrix3d::Identity() * 1e-3)
+                        .inverse();
 
-            // // The residual takes the partial derivative of rotation
-            // dres_dx.block<3, 3>(0, 0) =
-            //     curr_state_.pose.block<3, 3>(0, 0) *
-            //     Sophus::SO3d::hat(correspondences_array_[i]->mean_A);
-
-            // // The residual takes the partial derivative of position
-            // dres_dx.block<3, 3>(0, 3) = -Eigen::Matrix3d::Identity();
-
-            // local_result.block(0, 0, 6, 6) +=
-            //     gicp_constraint_gain_ * dres_dx.transpose() *
-            //     correspondences_array_[i]->mahalanobis * dres_dx;
-
-            // local_result.block(6, 0, 1, 6) +=
-            //     (gicp_constraint_gain_ * dres_dx.transpose() *
-            //      correspondences_array_[i]->mahalanobis * error)
-            //         .transpose();
-
-            // loss function
-            Eigen::Matrix3d mahalanobis =
-                correspondences_array_[i]->mahalanobis;
-            double cost_function = error.transpose() * mahalanobis * error;
-            Eigen::Vector3d rho;
-            CauchyLossFunction(cost_function, 10.0, rho);
-
-            local_result(7, 0) += config_.gicp_constraint_gain * rho[0];
-
-            // The residual takes the partial derivative of the state
-            Eigen::Matrix<double, 3, 6> dres_dx =
-                Eigen::Matrix<double, 3, 6>::Zero();
-
-            // The residual takes the partial derivative of rotation
-            dres_dx.block<3, 3>(0, 0) =
-                curr_state_.pose.block<3, 3>(0, 0) *
-                Sophus::SO3d::hat(correspondences_array_[i]->mean_A);
-
-            // The residual takes the partial derivative of position
-            dres_dx.block<3, 3>(0, 3) = -Eigen::Matrix3d::Identity();
-
-            Eigen::Matrix3d robust_information_matrix =
-                config_.gicp_constraint_gain *
-                (rho[1] * mahalanobis + 2.0 * rho[2] * mahalanobis * error *
-                                            error.transpose() * mahalanobis);
-            local_result.block(0, 0, 6, 6) +=
-                dres_dx.transpose() * robust_information_matrix * dres_dx;
-
-            local_result.block(6, 0, 1, 6) +=
-                (config_.gicp_constraint_gain * rho[1] * dres_dx.transpose() *
-                 mahalanobis * error)
-                    .transpose();
-          }
-
-          return local_result;
-        },
-        [](Eigen::Matrix<double, 8, 6> x, Eigen::Matrix<double, 8, 6> y) {
-          return x + y;
-        });
-
-    H.block<6, 6>(IndexErrorOri, IndexErrorOri) +=
-        result_matrix.block<6, 6>(0, 0);
-    b.block<6, 1>(IndexErrorOri, 0) +=
-        result_matrix.block<1, 6>(6, 0).transpose();
-
-    return result_matrix(7, 0);
-  }
-
-  size_t delta_p_size = voxel_map_ptr_->delta_P_.size();
-  size_t N = cloud_cov_ptr_->size();
-  correspondences_array_.clear();
-  result_matrix = tbb::parallel_reduce(
-      tbb::blocked_range<size_t>(0, N),
-      init_matrix,
-      [&, this](tbb::blocked_range<size_t> r,
-                Eigen::Matrix<double, 8, 6> local_result) {
-        for (size_t i = r.begin(); i < r.end(); ++i) {
-          const PointCovType& point_cov = cloud_cov_ptr_->points[i];
-          const Eigen::Vector3d mean_A =
-              point_cov.getVector3fMap().cast<double>();
-          const Eigen::Vector3d trans_mean_A =
-              curr_state_.pose.block<3, 3>(0, 0) * mean_A +
-              curr_state_.pose.block<3, 1>(0, 3);
-
-          Eigen::Matrix3d cov_A;
-          cov_A << point_cov.cov[0], point_cov.cov[1], point_cov.cov[2],
-              point_cov.cov[1], point_cov.cov[3], point_cov.cov[4],
-              point_cov.cov[2], point_cov.cov[4], point_cov.cov[5];
-
-          Eigen::Vector3d mean_B = Eigen::Vector3d::Zero();
-          Eigen::Matrix3d cov_B = Eigen::Matrix3d::Zero();
-
-          for (size_t i = 0; i < delta_p_size; ++i) {
-            Eigen::Vector3d nearby_point =
-                trans_mean_A + voxel_map_ptr_->delta_P_[i];
-            size_t hash_idx = voxel_map_ptr_->ComputeHashIndex(nearby_point);
-            if (voxel_map_ptr_->GetCentroidAndCovariance(
-                    hash_idx, mean_B, cov_B) &&
-                voxel_map_ptr_->IsSameGrid(nearby_point, mean_B)) {
-              Eigen::Matrix3d mahalanobis =
-                  (cov_B +
-                   curr_state_.pose.block<3, 3>(0, 0) * cov_A *
-                       curr_state_.pose.block<3, 3>(0, 0).transpose() +
-                   Eigen::Matrix3d::Identity() * 1e-3)
-                      .inverse();
-
-              Eigen::Vector3d error = mean_B - trans_mean_A;
-              double chi2_error = error.transpose() * mahalanobis * error;
-              if (config_.enable_outlier_rejection) {
-                if (iter_num_ > 2 && chi2_error > 7.815) {
-                  continue;
+                Eigen::Vector3d error = mean_B - trans_mean_A;
+                double chi2_error = error.transpose() * mahalanobis * error;
+                if (config_.enable_outlier_rejection) {
+                  if (iter_num_ > 2 && chi2_error > 7.815) {
+                    continue;
+                  }
                 }
+
+                std::shared_ptr<Correspondence> corr_ptr =
+                    std::make_shared<Correspondence>();
+                corr_ptr->mean_A = mean_A;
+                corr_ptr->mean_B = mean_B;
+                corr_ptr->mahalanobis = mahalanobis;
+                // concurrent_vector::emplace_back is thread-safe
+                correspondences_array_.emplace_back(corr_ptr);
+
+                break;
               }
-
-              std::shared_ptr<Correspondence> corr_ptr =
-                  std::make_shared<Correspondence>();
-              corr_ptr->mean_A = mean_A;
-              corr_ptr->mean_B = mean_B;
-              corr_ptr->mahalanobis = mahalanobis;
-              correspondences_array_.emplace_back(corr_ptr);
-
-              // without loss function
-              // local_result(7, 0) += gicp_constraint_gain_ * chi2_error;
-
-              // // The residual takes the partial derivative of the state
-              // Eigen::Matrix<double, 3, 6> dres_dx =
-              //     Eigen::Matrix<double, 3, 6>::Zero();
-
-              // // The residual takes the partial derivative of rotation
-              // dres_dx.block<3, 3>(0, 0) = curr_state_.pose.block<3, 3>(0, 0)
-              // *
-              //                             Sophus::SO3d::hat(mean_A);
-
-              // // The residual takes the partial derivative of position
-              // dres_dx.block<3, 3>(0, 3) = -Eigen::Matrix3d::Identity();
-
-              // local_result.block(0, 0, 6, 6) += gicp_constraint_gain_ *
-              //                                   dres_dx.transpose() *
-              //                                   mahalanobis * dres_dx;
-
-              // local_result.block(6, 0, 1, 6) +=
-              //     (gicp_constraint_gain_ * dres_dx.transpose() * mahalanobis
-              //     *
-              //      error)
-              //         .transpose();
-
-              // loss function
-              double cost_function = chi2_error;
-              Eigen::Vector3d rho;
-              CauchyLossFunction(cost_function, 10.0, rho);
-
-              local_result(7, 0) += config_.gicp_constraint_gain * rho[0];
-
-              // The residual takes the partial derivative of the state
-              Eigen::Matrix<double, 3, 6> dres_dx =
-                  Eigen::Matrix<double, 3, 6>::Zero();
-
-              // The residual takes the partial derivative of rotation
-              dres_dx.block<3, 3>(0, 0) = curr_state_.pose.block<3, 3>(0, 0) *
-                                          Sophus::SO3d::hat(mean_A);
-
-              // The residual takes the partial derivative of position
-              dres_dx.block<3, 3>(0, 3) = -Eigen::Matrix3d::Identity();
-
-              Eigen::Matrix3d robust_information_matrix =
-                  config_.gicp_constraint_gain *
-                  (rho[1] * mahalanobis + 2.0 * rho[2] * mahalanobis * error *
-                                              error.transpose() * mahalanobis);
-              local_result.block(0, 0, 6, 6) +=
-                  dres_dx.transpose() * robust_information_matrix * dres_dx;
-
-              local_result.block(6, 0, 1, 6) +=
-                  (config_.gicp_constraint_gain * rho[1] * dres_dx.transpose() *
-                   mahalanobis * error)
-                      .transpose();
-
-              break;
             }
           }
-        }
-
-        return local_result;
-      },
-      [](Eigen::Matrix<double, 8, 6> x, Eigen::Matrix<double, 8, 6> y) {
-        return x + y;
-      });
+        });
+  }
 
   effect_feat_num_ = correspondences_array_.size();
 
-  H.block<6, 6>(IndexErrorOri, IndexErrorOri) +=
-      result_matrix.block<6, 6>(0, 0);
-  b.block<6, 1>(IndexErrorOri, 0) +=
-      result_matrix.block<1, 6>(6, 0).transpose();
+  // ── Phase 2: Hessian / gradient assembly (serial) ───────────────────────────
+  // See ConstructPoint2PlaneConstraints: a tbb::parallel_reduce over an Eigen
+  // fixed-size matrix is unsafe under the oneTBB shipped with ROS 2 — TBB
+  // default-constructs the split accumulators and Eigen leaves them
+  // uninitialised, producing NaN H. Assemble serially instead.
+  Eigen::Matrix<double, 6, 6> H_pp = Eigen::Matrix<double, 6, 6>::Zero();
+  Eigen::Matrix<double, 6, 1> b_pp = Eigen::Matrix<double, 6, 1>::Zero();
+  double y0 = 0.0;
 
-  return result_matrix(7, 0);
+  for (size_t i = 0; i < correspondences_array_.size(); ++i) {
+    const Correspondence& corr = *correspondences_array_[i];
+    const Eigen::Vector3d trans_mean_A =
+        curr_state_.pose.block<3, 3>(0, 0) * corr.mean_A +
+        curr_state_.pose.block<3, 1>(0, 3);
+    const Eigen::Vector3d error = corr.mean_B - trans_mean_A;
+    const Eigen::Matrix3d& mahalanobis = corr.mahalanobis;
+
+    double cost_function = error.transpose() * mahalanobis * error;
+    Eigen::Vector3d rho;
+    CauchyLossFunction(cost_function, 10.0, rho);
+
+    y0 += config_.gicp_constraint_gain * rho[0];
+
+    // Residual Jacobian w.r.t. the state (rotation then position)
+    Eigen::Matrix<double, 3, 6> dres_dx = Eigen::Matrix<double, 3, 6>::Zero();
+    dres_dx.block<3, 3>(0, 0) =
+        curr_state_.pose.block<3, 3>(0, 0) * Sophus::SO3d::hat(corr.mean_A);
+    dres_dx.block<3, 3>(0, 3) = -Eigen::Matrix3d::Identity();
+
+    Eigen::Matrix3d robust_information_matrix =
+        config_.gicp_constraint_gain *
+        (rho[1] * mahalanobis + 2.0 * rho[2] * mahalanobis * error *
+                                    error.transpose() * mahalanobis);
+    H_pp += dres_dx.transpose() * robust_information_matrix * dres_dx;
+    b_pp += config_.gicp_constraint_gain * rho[1] * dres_dx.transpose() *
+            mahalanobis * error;
+  }
+
+  H.block<6, 6>(IndexErrorOri, IndexErrorOri) += H_pp;
+  b.block<6, 1>(IndexErrorOri, 0) += b_pp;
+
+  return y0;
 }
 
 double LIO::ConstructPoint2PlaneConstraints(Eigen::Matrix<double, 15, 15>& H,
                                             Eigen::Matrix<double, 15, 1>& b) {
-  // Thread-local correspondence list used during the KNN reduction.
-  // We use std::vector inside the reduction and assign back to
-  // correspondences_array_ (tbb::concurrent_vector) via range-assign at the end.
-  using ReduceResult = std::pair<Eigen::Matrix<double, 8, 6>,
-                                 std::vector<std::shared_ptr<Correspondence>>>;
+  // ── Phase 1: correspondence search (parallel) ───────────────────────────────
+  // Skipped in the "skip-KNN" acceleration mode (need_converge_), where we reuse
+  // the correspondences found during the first iterations.
+  if (!need_converge_) {
+    const size_t N = cloud_cov_ptr_->size();
+    correspondences_array_.clear();
 
-  Eigen::Matrix<double, 8, 6> result_matrix =
-      Eigen::Matrix<double, 8, 6>::Zero();
-  Eigen::Matrix<double, 8, 6> init_matrix = Eigen::Matrix<double, 8, 6>::Zero();
-
-  std::cout << "[P2Plane][converge] corr_size=" << correspondences_array_.size() 
-          << " need_converge=" << need_converge_ << std::endl;
-  // Skip the KNN to accelerate convergence
-  if (need_converge_) {
-    result_matrix = tbb::parallel_reduce(
-        tbb::blocked_range<size_t>(0, correspondences_array_.size()),
-        init_matrix,
-        [&, this](tbb::blocked_range<size_t> r,
-                  Eigen::Matrix<double, 8, 6> local_result) {
+    tbb::parallel_for(
+        tbb::blocked_range<size_t>(0, N),
+        [&, this](const tbb::blocked_range<size_t>& r) {
           for (size_t i = r.begin(); i < r.end(); ++i) {
-            const Eigen::Vector3d trans_pt =
-                curr_state_.pose.block<3, 3>(0, 0) *
-                    correspondences_array_[i]->mean_A +
+            const Eigen::Vector3d p =
+                cloud_cov_ptr_->points[i].getVector3fMap().cast<double>();
+            const Eigen::Vector3d p_w =
+                curr_state_.pose.block<3, 3>(0, 0) * p +
                 curr_state_.pose.block<3, 1>(0, 3);
-            const Eigen::Vector4d& plane_coeff =
-                correspondences_array_[i]->plane_coeff;
 
-            double error =
-                plane_coeff.head(3).dot(trans_pt) + plane_coeff(3, 0);
+            std::vector<Eigen::Vector3d> nearest_points;
+            nearest_points.reserve(10);
+            voxel_map_ptr_->KNNByCondition(p_w, 5, 5.0, nearest_points);
 
-            local_result(7, 0) +=
-                config_.point2plane_constraint_gain * error * error;
-
-            // The residual takes the partial derivative of the state
-            Eigen::Matrix<double, 1, 6> dres_dx =
-                Eigen::Matrix<double, 1, 6>::Zero();
-
-            // The residual takes the partial derivative of rotation
-            dres_dx.block<1, 3>(0, 0) =
-                -plane_coeff.head(3).transpose() *
-                curr_state_.pose.block<3, 3>(0, 0) *
-                Sophus::SO3d::hat(correspondences_array_[i]->mean_A);
-
-            // The residual takes the partial derivative of position
-            dres_dx.block<1, 3>(0, 3) = plane_coeff.head(3).transpose();
-
-            local_result.block(0, 0, 6, 6) +=
-                config_.point2plane_constraint_gain * dres_dx.transpose() *
-                dres_dx;
-
-            local_result.block(6, 0, 1, 6) +=
-                config_.point2plane_constraint_gain * dres_dx * error;
-          }
-
-          return local_result;
-        },
-        [](Eigen::Matrix<double, 8, 6> x, Eigen::Matrix<double, 8, 6> y) {
-          return x + y;
-        });
-
-    H.block<6, 6>(IndexErrorOri, IndexErrorOri) +=
-        result_matrix.block<6, 6>(0, 0);
-    b.block<6, 1>(IndexErrorOri, 0) +=
-        result_matrix.block<1, 6>(6, 0).transpose();
-
-    return result_matrix(7, 0);
-  }
-
-  // ── KNN path ────────────────────────────────────────────────────────────────
-  // Correspondences are accumulated into thread-local std::vectors inside the
-  // reduction body, then merged in the combine lambda. This avoids concurrent
-  // writes to the shared correspondences_array_ (a tbb::concurrent_vector).
-  // After the reduction we assign back via the range constructor.
-
-  size_t N = cloud_cov_ptr_->size();
-  correspondences_array_.clear();
-
-  ReduceResult init_result = {init_matrix, {}};
-
-  ReduceResult final_result = tbb::parallel_reduce(
-      tbb::blocked_range<size_t>(0, N),
-      init_result,
-      [&, this](tbb::blocked_range<size_t> r, ReduceResult local) {
-        for (size_t i = r.begin(); i < r.end(); ++i) {
-          const Eigen::Vector3d p =
-              cloud_cov_ptr_->points[i].getVector3fMap().cast<double>();
-          const Eigen::Vector3d p_w = curr_state_.pose.block<3, 3>(0, 0) * p +
-                                      curr_state_.pose.block<3, 1>(0, 3);
-
-          std::vector<Eigen::Vector3d> nearest_points;
-          nearest_points.reserve(10);
-
-          voxel_map_ptr_->KNNByCondition(p_w, 5, 5.0, nearest_points);
-
-          Eigen::Vector4d plane_coeff;
-          if (nearest_points.size() >= 3 &&
-              EstimatePlane(plane_coeff, nearest_points)) {
-            double error = plane_coeff.head(3).dot(p_w) + plane_coeff(3, 0);
-
-            bool is_vaild = p.norm() > (81 * error * error);
-            if (is_vaild) {
-              std::shared_ptr<Correspondence> corr_ptr =
-                  std::make_shared<Correspondence>();
-              corr_ptr->mean_A = p;
-              corr_ptr->plane_coeff = plane_coeff;
-              // Thread-local push — no data race
-              local.second.emplace_back(corr_ptr);
-
-              local.first(7, 0) +=
-                  config_.point2plane_constraint_gain * error * error;
-
-              // The residual takes the partial derivative of the state
-              Eigen::Matrix<double, 1, 6> dres_dx =
-                  Eigen::Matrix<double, 1, 6>::Zero();
-
-              // The residual takes the partial derivative of rotation
-              dres_dx.block<1, 3>(0, 0) = -plane_coeff.head(3).transpose() *
-                                          curr_state_.pose.block<3, 3>(0, 0) *
-                                          Sophus::SO3d::hat(p);
-
-              // The residual takes the partial derivative of position
-              dres_dx.block<1, 3>(0, 3) = plane_coeff.head(3).transpose();
-
-              local.first.block(0, 0, 6, 6) +=
-                  config_.point2plane_constraint_gain * dres_dx.transpose() *
-                  dres_dx;
-
-              local.first.block(6, 0, 1, 6) +=
-                  config_.point2plane_constraint_gain * dres_dx * error;
+            Eigen::Vector4d plane_coeff;
+            if (nearest_points.size() >= 3 &&
+                EstimatePlane(plane_coeff, nearest_points)) {
+              const double error =
+                  plane_coeff.head(3).dot(p_w) + plane_coeff(3, 0);
+              if (p.norm() > (81 * error * error)) {
+                std::shared_ptr<Correspondence> corr_ptr =
+                    std::make_shared<Correspondence>();
+                corr_ptr->mean_A = p;
+                corr_ptr->plane_coeff = plane_coeff;
+                // concurrent_vector::emplace_back is thread-safe
+                correspondences_array_.emplace_back(corr_ptr);
+              }
             }
           }
-        }
+        });
+  }
 
-        return local;
-      },
-      [](ReduceResult a, const ReduceResult& b) {
-        // Merge matrices
-        a.first += b.first;
-        // Merge thread-local correspondence lists
-        a.second.insert(a.second.end(),
-                        std::make_move_iterator(b.second.begin()),
-                        std::make_move_iterator(b.second.end()));
-        return a;
-      });
-
-  result_matrix = final_result.first;
-  // Assign back to tbb::concurrent_vector via range constructor
-  correspondences_array_.assign(final_result.second.begin(),
-                                final_result.second.end());
   effect_feat_num_ = correspondences_array_.size();
 
-  H.block<6, 6>(IndexErrorOri, IndexErrorOri) +=
-      result_matrix.block<6, 6>(0, 0);
-  b.block<6, 1>(IndexErrorOri, 0) +=
-      result_matrix.block<1, 6>(6, 0).transpose();
+  // ── Phase 2: Hessian / gradient assembly (serial) ───────────────────────────
+  // This is deliberately NOT a tbb::parallel_reduce over an Eigen fixed-size
+  // matrix. Under the oneTBB shipped with ROS 2 (Jazzy), using a 32-byte-aligned
+  // Eigen::Matrix as the reduction value returned a partially-uninitialised
+  // accumulator (NaN H, subnormal cost) — the source of the SO3::exp(nan)
+  // crashes. The loop is a few thousand 6x6 updates; cost is negligible and the
+  // expensive KNN above stays parallel.
+  Eigen::Matrix<double, 6, 6> H_pp = Eigen::Matrix<double, 6, 6>::Zero();
+  Eigen::Matrix<double, 6, 1> b_pp = Eigen::Matrix<double, 6, 1>::Zero();
+  double y0 = 0.0;
 
-  return result_matrix(7, 0);
+  for (size_t i = 0; i < correspondences_array_.size(); ++i) {
+    const Correspondence& corr = *correspondences_array_[i];
+    const Eigen::Vector3d trans_pt =
+        curr_state_.pose.block<3, 3>(0, 0) * corr.mean_A +
+        curr_state_.pose.block<3, 1>(0, 3);
+    const Eigen::Vector4d& plane_coeff = corr.plane_coeff;
+
+    const double error = plane_coeff.head(3).dot(trans_pt) + plane_coeff(3, 0);
+    y0 += config_.point2plane_constraint_gain * error * error;
+
+    // Residual Jacobian w.r.t. the state (rotation then position)
+    Eigen::Matrix<double, 1, 6> dres_dx = Eigen::Matrix<double, 1, 6>::Zero();
+    dres_dx.block<1, 3>(0, 0) = -plane_coeff.head(3).transpose() *
+                                curr_state_.pose.block<3, 3>(0, 0) *
+                                Sophus::SO3d::hat(corr.mean_A);
+    dres_dx.block<1, 3>(0, 3) = plane_coeff.head(3).transpose();
+
+    H_pp += config_.point2plane_constraint_gain * dres_dx.transpose() * dres_dx;
+    b_pp += config_.point2plane_constraint_gain * dres_dx.transpose() * error;
+  }
+
+  H.block<6, 6>(IndexErrorOri, IndexErrorOri) += H_pp;
+  b.block<6, 1>(IndexErrorOri, 0) += b_pp;
+
+  return y0;
 }
 
 double LIO::ConstructImuPriorConstraints(Eigen::Matrix<double, 15, 15>& H,
@@ -655,7 +416,13 @@ double LIO::ConstructImuPriorConstraints(Eigen::Matrix<double, 15, 15>& H,
 bool LIO::Predict(const double time,
                   const Eigen::Vector3d& acc_1,
                   const Eigen::Vector3d& gyr_1) {
+  
   double dt = time - lio_time_;
+  if (dt <= 0.0 || dt > 0.5) {
+    lio_time_ = time; acc_0_ = acc_1; gyr_0_ = gyr_1;
+    return false;  // skip this step instead of integrating garbage
+  }
+  
 
 //   std::cout << "dt = " << dt << "and time = " << time << "and lio_time = " << lio_time_ << std::endl;
 
@@ -736,7 +503,6 @@ bool LIO::ErrorStateUpdate(const double dt,
   Eigen::Vector3d a0 = acc_0 - curr_state_.ba;
   Eigen::Vector3d a1 = acc_1 - curr_state_.ba;
 
-  Eigen::Matrix3d w_x = Sophus::SO3d::hat(w).matrix();
   Eigen::Matrix3d a0_x = Sophus::SO3d::hat(a0).matrix();
   Eigen::Matrix3d a1_x = Sophus::SO3d::hat(a1).matrix();
   Eigen::Matrix3d I_w_x = Sophus::SO3d::exp(-w * dt).matrix();

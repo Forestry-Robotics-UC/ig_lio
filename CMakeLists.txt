@@ -4,8 +4,6 @@ project(ig_lio)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_BUILD_TYPE Release)
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 ${CMAKE_CXX_FLAGS} -Wall")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
 
 # ROS 2 dependencies
 find_package(ament_cmake REQUIRED)
@@ -21,7 +19,6 @@ find_package(ament_index_cpp REQUIRED)   # <-- added
 find_package(Eigen3 REQUIRED)
 find_package(PCL 1.8 REQUIRED)
 find_package(TBB REQUIRED)
-find_package(OpenMP REQUIRED)
 
 include(cmake/glog.cmake)
 
@@ -59,7 +56,6 @@ target_link_libraries(${PROJECT_NAME}_node
   glog
   gflags
   TBB::tbb
-  OpenMP::OpenMP_CXX
 )
 
 install(TARGETS ${PROJECT_NAME}_node
