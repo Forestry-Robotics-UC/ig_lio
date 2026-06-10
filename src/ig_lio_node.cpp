@@ -11,7 +11,6 @@
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
-#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <boost/filesystem.hpp>
 
 #include <pcl/filters/voxel_grid.h>
@@ -54,6 +53,12 @@ nav_msgs::msg::Path path_array;
 
 // TF broadcaster (initialised in main after node is created)
 std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster;
+
+// Frame names (overridable via parameters; set in main before spinning).
+// odom_frame  = global/world frame that odometry, scans and path live in.
+// base_frame  = moving body frame the estimated pose refers to.
+std::string g_odom_frame = "odom";
+std::string g_base_frame = "base_link";
 
 Timer timer;
 std::shared_ptr<PointCloudPreprocess> cloud_preprocess_ptr;
@@ -351,8 +356,8 @@ void Process()
 
   // Odometry message
   nav_msgs::msg::Odometry odom_msg;
-  odom_msg.header.frame_id = "odom";
-  odom_msg.child_frame_id = "base_link";
+  odom_msg.header.frame_id = g_odom_frame;
+  odom_msg.child_frame_id = g_base_frame;
   odom_msg.header.stamp = stamp;
   Eigen::Quaterniond temp_q(result_pose.block<3, 3>(0, 0));
   odom_msg.pose.pose.orientation.x = temp_q.x();
@@ -378,8 +383,8 @@ void Process()
   // TF broadcast
   geometry_msgs::msg::TransformStamped tf_msg;
   tf_msg.header.stamp = stamp;
-  tf_msg.header.frame_id = "odom";
-  tf_msg.child_frame_id = "base_link";
+  tf_msg.header.frame_id = g_odom_frame;
+  tf_msg.child_frame_id = g_base_frame;
   tf_msg.transform.translation.x = result_pose(0, 3);
   tf_msg.transform.translation.y = result_pose(1, 3);
   tf_msg.transform.translation.z = result_pose(2, 3);
@@ -395,7 +400,7 @@ void Process()
       *sensor_measurement.cloud_ptr_, *trans_cloud, result_pose);
   sensor_msgs::msg::PointCloud2 scan_msg;
   pcl::toROSMsg(*trans_cloud, scan_msg);
-  scan_msg.header.frame_id = "odom";
+  scan_msg.header.frame_id = g_odom_frame;
   scan_msg.header.stamp = stamp;
   current_scan_pub->publish(scan_msg);
 
@@ -417,15 +422,15 @@ void Process()
     pcl::transformPointCloud(*cloud_DS, *trans_cloud_DS, result_pose);
     sensor_msgs::msg::PointCloud2 keyframe_scan_msg;
     pcl::toROSMsg(*trans_cloud_DS, keyframe_scan_msg);
-    keyframe_scan_msg.header.frame_id = "odom";
+    keyframe_scan_msg.header.frame_id = g_odom_frame;
     keyframe_scan_msg.header.stamp = stamp;
     keyframe_scan_pub->publish(keyframe_scan_msg);
 
     path_array.header.stamp = stamp;
-    path_array.header.frame_id = "odom";
+    path_array.header.frame_id = g_odom_frame;
     geometry_msgs::msg::PoseStamped pose_stamped;
     pose_stamped.header.stamp = stamp;
-    pose_stamped.header.frame_id = "odom";
+    pose_stamped.header.frame_id = g_odom_frame;
     pose_stamped.pose.position.x = result_pose(0, 3);
     pose_stamped.pose.position.y = result_pose(1, 3);
     pose_stamped.pose.position.z = result_pose(2, 3);
@@ -477,9 +482,10 @@ int main(int argc, char** argv)
   rclcpp::init(argc, argv);
   g_node = rclcpp::Node::make_shared("ig_lio_node");
 
-  std::string package_path =
-      ament_index_cpp::get_package_share_directory("ig_lio");
-  Logger logger(clean_argc, clean_argv.data(), package_path);
+  // Write glog output to the package's own log/ dir (source tree, baked in by
+  // CMake) rather than the install/share copy, which gets overwritten on every
+  // rebuild. Matches where the trajectory result/ output lands.
+  Logger logger(clean_argc, clean_argv.data(), IG_LIO_SOURCE_DIR);
 
   // ── QoS reliability (matches whatever the bag/driver offers) ─────────────────
   // best_effort (default) subscribers match BOTH best_effort and reliable
@@ -500,6 +506,16 @@ int main(int argc, char** argv)
   };
   LOG(INFO) << "QoS reliability: "
             << (use_reliable ? "reliable" : "best_effort");
+
+  // ── Frame names ─────────────────────────────────────────────────────────────
+  // Make parent/child frames configurable so the node can coexist with bags or
+  // other nodes that already publish odom->base_link (just point this at a
+  // different child, e.g. base_frame:="lio_base_link").
+  g_node->declare_parameter<std::string>("odom_frame", g_odom_frame);
+  g_node->declare_parameter<std::string>("base_frame", g_base_frame);
+  g_node->get_parameter("odom_frame", g_odom_frame);
+  g_node->get_parameter("base_frame", g_base_frame);
+  LOG(INFO) << "TF frames: " << g_odom_frame << " -> " << g_base_frame;
 
   // ── Subscribe: IMU ──────────────────────────────────────────────────────────
   std::string imu_topic;
@@ -682,11 +698,20 @@ int main(int argc, char** argv)
   voxel_filter.setLeafSize(0.5f, 0.5f, 0.5f);
 
   // ── Trajectory output file ───────────────────────────────────────────────────
-  fs::path result_path =
-      fs::path(package_path) / "result" / "lio_odom.txt";
+  // result_directory lets the user pick where lio_odom.txt lands. Empty -> the
+  // package's own result/ dir (IG_LIO_SOURCE_DIR is baked in at build time by
+  // CMake, so this persists across rebuilds).
+  std::string result_directory;
+  g_node->declare_parameter<std::string>("result_directory", "");
+  g_node->get_parameter("result_directory", result_directory);
+  fs::path result_dir = result_directory.empty()
+                            ? fs::path(IG_LIO_SOURCE_DIR) / "result"
+                            : fs::path(result_directory);
+  fs::path result_path = result_dir / "lio_odom.txt";
   if (!fs::exists(result_path.parent_path())) {
     fs::create_directories(result_path.parent_path());
   }
+  LOG(INFO) << "Trajectory output: " << result_path;
   odom_stream.open(result_path, std::ios::out);
   if (!odom_stream.is_open()) {
     LOG(ERROR) << "failed to open: " << result_path;

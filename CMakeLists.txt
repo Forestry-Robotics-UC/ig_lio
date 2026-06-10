@@ -13,7 +13,6 @@ find_package(pcl_ros REQUIRED)           # optional, keep if needed
 find_package(pcl_conversions REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
-find_package(ament_index_cpp REQUIRED)   # <-- added
 
 # System dependencies
 find_package(Eigen3 REQUIRED)
@@ -37,7 +36,12 @@ add_executable(${PROJECT_NAME}_node
   src/faster_voxel_grid.cpp
 )
 
-# Use ament_target_dependencies for all ROS packages + ament_index_cpp
+# Bake the source dir in so the node can default its trajectory output to the
+# package's own result/ directory (persists across rebuilds, unlike share).
+target_compile_definitions(${PROJECT_NAME}_node PRIVATE
+  IG_LIO_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+# Use ament_target_dependencies for all ROS packages.
 # This automatically adds include directories, libraries, and compile definitions.
 ament_target_dependencies(${PROJECT_NAME}_node
   rclcpp
@@ -46,7 +50,6 @@ ament_target_dependencies(${PROJECT_NAME}_node
   pcl_conversions
   sensor_msgs
   nav_msgs
-  ament_index_cpp        # <-- critical: adds include path for the header
 )
 
 # Link remaining non‑ROS dependencies

@@ -11,6 +11,17 @@ ig_lio_node:
     #   ros2 topic info -v <topic>   (look at the Reliability line)
     qos_reliability: "best_effort"
 
+    # TF / odometry frame names. Override these if something else already
+    # publishes odom->base_link (e.g. set base_frame: "lio_base_link") so the
+    # two transforms don't collide. odom_frame is the global frame that the
+    # published scans and path also live in.
+    odom_frame: "odom"
+    base_frame: "base_link"
+
+    # Directory for the trajectory output (lio_odom.txt). Empty -> the package's
+    # own result/ directory (its source tree). Set a full path to override.
+    result_directory: ""
+
     min_radius: 1.0
     max_radius: 30.0
     point_filter_num: 5

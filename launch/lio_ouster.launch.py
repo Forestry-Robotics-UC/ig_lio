@@ -1,56 +1,79 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration
+from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 import os
 
 
 def generate_launch_description():
-    ig_lio_config = os.path.join(
-        get_package_share_directory('ig_lio'),
-        'config',
-        'ouster128.yaml'
-    )
+    pkg_share = get_package_share_directory('ig_lio')
+
+    ig_lio_config = os.path.join(pkg_share, 'config', 'ouster128.yaml')
+    rviz_config = os.path.join(pkg_share, 'rviz', 'ros2.rviz')
+
+    # Single source of truth for sim time, shared by every node below. Set
+    # use_sim_time:=true together with `ros2 bag play --clock` so the whole
+    # system's "now" follows bag time (otherwise leave it false to avoid a
+    # clock frozen at 0). Coerced to bool since launch args are strings.
+    use_sim_time = ParameterValue(
+        LaunchConfiguration('use_sim_time'), value_type=bool)
 
     return LaunchDescription([
 
+        DeclareLaunchArgument(
+            'use_sim_time',
+            default_value='false',
+            description='Use the /clock topic as the time source for all nodes '
+                        '(pair with "ros2 bag play --clock").',
+        ),
+
+        # Launch RViz alongside the node when rviz:=true (default: off)
+        DeclareLaunchArgument(
+            'rviz',
+            default_value='false',
+            description='Launch RViz2 with the bundled ros2.rviz config.',
+        ),
+
         # Static transforms
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='ouster_broadcaster',
-            arguments=['--x', '0', '--y', '0', '--z', '0',
-                       '--roll', '0', '--pitch', '0', '--yaw', '0',
-                       '--frame-id', 'base_link',
-                       '--child-frame-id', 'os_sensor'],
-        ),
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='imu_broadcaster',
-            arguments=['--x', '0', '--y', '0', '--z', '0',
-                       '--roll', '1.5708', '--pitch', '0', '--yaw', '0',
-                       '--frame-id', 'base_link',
-                       '--child-frame-id', 'imu'],
-        ),
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='camera_broadcaster',
-            arguments=['--x', '0', '--y', '0', '--z', '0',
-                       '--roll', '0', '--pitch', '0', '--yaw', '0',
-                       '--frame-id', 'base_link',
-                       '--child-frame-id', 'camera_link'],
-        ),
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='gps_broadcaster',
-            arguments=['--x', '0', '--y', '0', '--z', '0',
-                       '--roll', '0', '--pitch', '0', '--yaw', '0',
-                       '--frame-id', 'base_link',
-                       '--child-frame-id', 'gps'],
-        ),
+        # Node(
+        #     package='tf2_ros',
+        #     executable='static_transform_publisher',
+        #     name='ouster_broadcaster',
+        #     arguments=['--x', '0', '--y', '0', '--z', '0',
+        #                '--roll', '0', '--pitch', '0', '--yaw', '0',
+        #                '--frame-id', 'base_link',
+        #                '--child-frame-id', 'os_sensor'],
+        # ),
+        # Node(
+        #     package='tf2_ros',
+        #     executable='static_transform_publisher',
+        #     name='imu_broadcaster',
+        #     arguments=['--x', '0', '--y', '0', '--z', '0',
+        #                '--roll', '1.5708', '--pitch', '0', '--yaw', '0',
+        #                '--frame-id', 'base_link',
+        #                '--child-frame-id', 'imu'],
+        # ),
+        # Node(
+        #     package='tf2_ros',
+        #     executable='static_transform_publisher',
+        #     name='camera_broadcaster',
+        #     arguments=['--x', '0', '--y', '0', '--z', '0',
+        #                '--roll', '0', '--pitch', '0', '--yaw', '0',
+        #                '--frame-id', 'base_link',
+        #                '--child-frame-id', 'camera_link'],
+        # ),
+        # Node(
+        #     package='tf2_ros',
+        #     executable='static_transform_publisher',
+        #     name='gps_broadcaster',
+        #     arguments=['--x', '0', '--y', '0', '--z', '0',
+        #                '--roll', '0', '--pitch', '0', '--yaw', '0',
+        #                '--frame-id', 'base_link',
+        #                '--child-frame-id', 'gps'],
+        # ),
 
         # ig_lio node
         Node(
@@ -60,7 +83,22 @@ def generate_launch_description():
             output='screen',
             parameters=[
                 ig_lio_config,
-                {'use_sim_time': True},
+                # ig_lio timestamps everything from the sensor data, not the ROS
+                # clock, so use_sim_time has no effect on it. Wired up anyway for
+                # completeness and future-proofing (e.g. if a node that does read
+                # the clock is added, or for bag playback with --clock).
+                {'use_sim_time': use_sim_time},
             ],
+        ),
+
+        # RViz2 (only when rviz:=true)
+        Node(
+            package='rviz2',
+            executable='rviz2',
+            name='rviz2',
+            output='screen',
+            arguments=['-d', rviz_config],
+            parameters=[{'use_sim_time': use_sim_time}],
+            condition=IfCondition(LaunchConfiguration('rviz')),
         ),
     ])
