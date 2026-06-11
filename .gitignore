@@ -1,2 +1,5 @@
 # Python bytecode (ROS 2 launch files)
 __pycache__/
+
+# Internal handoff / drafting notes (not part of the package)
+docs/

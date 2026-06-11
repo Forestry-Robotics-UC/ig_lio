@@ -159,6 +159,38 @@ void PointCloudPreprocess::ProcessHesai(
   }
 }
 
+#ifdef HAVE_LIVOX
+void PointCloudPreprocess::ProcessLivox(
+    const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr& msg,
+    pcl::PointCloud<PointType>::Ptr& cloud_out) {
+  cloud_out->clear();
+  cloud_out->reserve(msg->point_num);
+
+  for (size_t i = 1; i < msg->point_num; ++i) {
+    // Keep only valid scan lines and good returns: tag bits 0x30 select the
+    // spatial/intensity confidence; 0x10 (high) or 0x00 (normal) are kept.
+    if ((msg->points[i].line < num_scans_) &&
+        (((msg->points[i].tag & 0x30) == 0x10) ||
+         ((msg->points[i].tag & 0x30) == 0x00)) &&
+        (i % config_.point_filter_num == 0) && !HasInf(msg->points[i]) &&
+        !HasNan(msg->points[i]) && !IsNear(msg->points[i], msg->points[i - 1])) {
+      PointType point;
+      point.normal_x = 0;
+      point.normal_y = 0;
+      point.normal_z = 0;
+      point.x = msg->points[i].x;
+      point.y = msg->points[i].y;
+      point.z = msg->points[i].z;
+      point.intensity = msg->points[i].reflectivity;
+      // offset_time is nanoseconds from the scan start; curvature is in ms,
+      // matching the per-cloud relative-time convention used for the others.
+      point.curvature = msg->points[i].offset_time * 1e-6;
+      cloud_out->push_back(point);
+    }
+  }
+}
+#endif
+
 void PointCloudPreprocess::ProcessOuster(
     const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg,
     pcl::PointCloud<PointType>::Ptr& cloud_out) {

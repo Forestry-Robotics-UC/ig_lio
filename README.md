@@ -6,7 +6,9 @@ important modifications:
 
 - Ports the package from ROS 1 to **ROS 2 (Jazzy)** — `ament_cmake`, `rclcpp`,
   launch files and parameters in the ROS 2 style;
-- Removes dependencies (and support) of Livox LiDARs;
+- Makes the **Livox** dependency optional instead of mandatory: the driver is no
+  longer required to build, but Livox support is still compiled in when
+  `livox_ros_driver2` is present (see [Sensor support](#sensor-support));
 - Adds support for the legacy Velodyne Velarray M1600 LiDAR (by Pedro Tomás);
 - Fixes the point cloud undistorting mechanism (at least with the Ouster) by
   updating Ouster-related code to the new message field names, types and other
@@ -83,6 +85,45 @@ Published:
 
 ---
 
+## Sensor support
+
+This port keeps the original sensor coverage, but with honest confidence levels.
+Only the Ouster path has been validated on hardware; the others were ported but
+not tested, so treat them as starting points and verify before relying on them.
+
+| `lidar_type` | Sensor(s)              | Message type                       | Status                                   |
+|--------------|------------------------|------------------------------------|------------------------------------------|
+| `ouster`     | Ouster OS1-128 (et al.)| `sensor_msgs/PointCloud2`          | ✅ Tested & tuned (`config/ouster128.yaml`)|
+| `velodyne`   | Velodyne (VLP etc.)    | `sensor_msgs/PointCloud2`          | ⚠️ Ported, untested                       |
+| `Hesai`      | Hesai                  | `sensor_msgs/PointCloud2`          | ⚠️ Ported, untested                       |
+| `M1600`      | Velodyne Velarray M1600| `sensor_msgs/PointCloud2`          | ⚠️ Ported, untested                       |
+| `livox`      | Livox (e.g. AVIA)      | `livox_ros_driver2/CustomMsg`      | ⚠️ Ported, untested — **optional driver** |
+
+### Enabling Livox
+
+Unlike the other sensors, Livox does not publish `PointCloud2`; it uses the
+`CustomMsg` type from the ROS 2 Livox driver. That driver is **not** a hard
+dependency of this package (so `rosdep` works without it). Livox support is
+compiled in only when [`livox_ros_driver2`](https://github.com/Livox-SDK/livox_ros_driver2)
+is present in your workspace:
+
+```bash
+# 1. Add livox_ros_driver2 to your workspace (see its README for the SDK steps),
+#    then rebuild ig_lio so it detects the driver:
+colcon build --packages-select ig_lio
+# Look for "Livox support ENABLED" in the build output.
+
+# 2. Run with the bundled AVIA config:
+ros2 launch ig_lio lio_livox.launch.py
+```
+
+If the driver is absent, the package still builds; selecting `lidar_type: livox`
+then exits with a message telling you to install the driver and rebuild. The
+Livox preprocessing is ported verbatim from upstream and has **not** been
+validated in this ROS 2 port — tune `config/avia.yaml` for your unit.
+
+---
+
 ## Configuration
 
 All parameters live in `config/ouster128.yaml`. Copy and adapt it for other
@@ -92,7 +133,7 @@ LiDAR/IMU combos. The most relevant ones:
 |--------------------|-----------------|-------------------------------------------------------------------------|
 | `lidar_topic`      | —               | LiDAR point cloud topic to subscribe to                                 |
 | `imu_topic`        | —               | IMU topic to subscribe to                                               |
-| `lidar_type`       | `ouster`        | `ouster`, `velodyne`, `M1600`, or `Hesai` (case-sensitive)              |
+| `lidar_type`       | `ouster`        | `ouster`, `velodyne`, `M1600`, `Hesai`, or `livox` (case-sensitive)     |
 | `qos_reliability`  | `best_effort`   | `best_effort` matches any publisher; `reliable` only matches reliable   |
 | `odom_frame`       | `odom`          | global/world frame (odometry, scans and path live here)                 |
 | `base_frame`       | `base_link`     | moving body frame the estimated pose refers to                          |

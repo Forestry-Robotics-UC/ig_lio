@@ -14,6 +14,11 @@ find_package(pcl_conversions REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 
+# Optional: Livox support. Only enabled if the ROS 2 Livox driver is present in
+# the workspace (it is NOT a hard dependency, so rosdep works without it). When
+# found, HAVE_LIVOX is defined and the Livox CustomMsg path is compiled in.
+find_package(livox_ros_driver2 QUIET)
+
 # System dependencies
 find_package(Eigen3 REQUIRED)
 find_package(PCL 1.8 REQUIRED)
@@ -51,6 +56,16 @@ ament_target_dependencies(${PROJECT_NAME}_node
   sensor_msgs
   nav_msgs
 )
+
+# Optional Livox support (see find_package above).
+if(livox_ros_driver2_FOUND)
+  message(STATUS "ig_lio: livox_ros_driver2 found -- Livox support ENABLED (lidar_type: livox)")
+  target_compile_definitions(${PROJECT_NAME}_node PRIVATE HAVE_LIVOX)
+  ament_target_dependencies(${PROJECT_NAME}_node livox_ros_driver2)
+else()
+  message(STATUS "ig_lio: livox_ros_driver2 NOT found -- Livox support DISABLED. "
+                 "Install it in your workspace and rebuild to enable lidar_type: livox.")
+endif()
 
 # Link remaining non‑ROS dependencies
 target_link_libraries(${PROJECT_NAME}_node

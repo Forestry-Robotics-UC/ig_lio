@@ -8,6 +8,9 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <rclcpp/rclcpp.hpp>
+#ifdef HAVE_LIVOX
+#include <livox_ros_driver2/msg/custom_msg.hpp>
+#endif
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -144,6 +147,38 @@ void CloudCallBack(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
       },
       "Cloud Preprocess (Standard)");
 }
+
+#ifdef HAVE_LIVOX
+// ── LiDAR callback (Livox CustomMsg) ─────────────────────────────────────────
+// Livox does not publish PointCloud2, so it gets its own callback feeding the
+// same cloud_buff. Ported from upstream; not validated on hardware here.
+
+void LivoxCloudCallBack(const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr msg)
+{
+  static double last_lidar_timestamp = 0.0;
+  timer.Evaluate(
+      [&]() {
+        lidar_timestamp = rclcpp::Time(msg->header.stamp).seconds();
+
+        CloudPtr cloud_ptr(new CloudType());
+        cloud_preprocess_ptr->ProcessLivox(msg, cloud_ptr);
+
+        {
+          std::lock_guard<std::mutex> lock(buff_mutex);
+
+          if (lidar_timestamp < last_lidar_timestamp) {
+            LOG(WARNING) << "lidar loop back, clear buffer";
+            cloud_buff.clear();
+          }
+          last_lidar_timestamp = lidar_timestamp;
+
+          cloud_buff.push_back(
+              std::make_pair(rclcpp::Time(msg->header.stamp).seconds(), cloud_ptr));
+        }
+      },
+      "Cloud Preprocess (Livox)");
+}
+#endif
 
 // ── Measurement synchronisation ──────────────────────────────────────────────
 
@@ -541,6 +576,15 @@ int main(int argc, char** argv)
     lidar_type = LidarType::HESAI;
   } else if (lidar_type_string == "ouster") {
     lidar_type = LidarType::OUSTER;
+  } else if (lidar_type_string == "livox") {
+#ifdef HAVE_LIVOX
+    lidar_type = LidarType::LIVOX;
+#else
+    LOG(ERROR) << "lidar_type 'livox' selected but ig_lio was built without "
+                  "livox_ros_driver2. Install the driver in your workspace and "
+                  "rebuild to enable Livox support.";
+    return 1;
+#endif
   } else {
     LOG(ERROR) << "Error lidar type!";
     return 1;
@@ -548,8 +592,18 @@ int main(int argc, char** argv)
 
   // LiDAR: depth 10; clouds are big & low-rate
   auto lidar_qos = apply_reliability(rclcpp::QoS(rclcpp::KeepLast(10)));
-  auto cloud_sub = g_node->create_subscription<sensor_msgs::msg::PointCloud2>(
-      lidar_topic, lidar_qos, CloudCallBack);
+  // Livox uses its own CustomMsg subscription; everything else is PointCloud2.
+  rclcpp::SubscriptionBase::SharedPtr cloud_sub;
+#ifdef HAVE_LIVOX
+  if (lidar_type == LidarType::LIVOX) {
+    cloud_sub = g_node->create_subscription<livox_ros_driver2::msg::CustomMsg>(
+        lidar_topic, lidar_qos, LivoxCloudCallBack);
+  } else
+#endif
+  {
+    cloud_sub = g_node->create_subscription<sensor_msgs::msg::PointCloud2>(
+        lidar_topic, lidar_qos, CloudCallBack);
+  }
 
   // ── Parameters: point-cloud pre-processing ──────────────────────────────────
   double time_scale;

@@ -10,10 +10,13 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>   // ROS2 message
 #include <glog/logging.h>
 #include <pcl_conversions/pcl_conversions.h>
+#ifdef HAVE_LIVOX
+#include <livox_ros_driver2/msg/custom_msg.hpp>
+#endif
 
 #include "point_type.h"
 
-enum class LidarType { VELODYNE, OUSTER, HESAI, VELODYNEM1600 };
+enum class LidarType { VELODYNE, OUSTER, HESAI, VELODYNEM1600, LIVOX };
 
 // for Velodyne LiDAR
 struct VelodynePointXYZIRT {
@@ -91,6 +94,13 @@ class PointCloudPreprocess {
   // ROS2: use SharedPtr (const reference for efficiency)
   void Process(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg,
                pcl::PointCloud<PointType>::Ptr& cloud_out);
+
+#ifdef HAVE_LIVOX
+  // Livox arrives as CustomMsg (not PointCloud2), so it has its own entry point.
+  // Ported from upstream; NOT validated on hardware in this ROS 2 port.
+  void ProcessLivox(const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr& msg,
+                    pcl::PointCloud<PointType>::Ptr& cloud_out);
+#endif
 
  private:
   template <typename T>
