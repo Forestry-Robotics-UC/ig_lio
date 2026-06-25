@@ -3,6 +3,30 @@
 
 extern Timer timer;
 
+namespace {
+// Accumulator for the parallel Hessian/gradient assembly below. The whole reason
+// the original tbb::parallel_reduce over a bare Eigen fixed-size matrix produced
+// NaNs under the oneTBB shipped with ROS 2 is that TBB default-constructs the
+// per-split value and Eigen leaves it uninitialised. The in-class `= Zero()`
+// initialisers here guarantee every split (and the identity) starts zeroed, so
+// the reduction is both parallel and correct.
+struct ConstraintAccum {
+  Eigen::Matrix<double, 6, 6> H = Eigen::Matrix<double, 6, 6>::Zero();
+  Eigen::Matrix<double, 6, 1> b = Eigen::Matrix<double, 6, 1>::Zero();
+  double y0 = 0.0;
+
+  ConstraintAccum operator+(const ConstraintAccum& o) const {
+    ConstraintAccum r;
+    r.H = H + o.H;
+    r.b = b + o.b;
+    r.y0 = y0 + o.y0;
+    return r;
+  }
+
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+}  // namespace
+
 bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
   if (sensor_measurement.measurement_type_ == MeasurementType::LIDAR) {
     // range filter
@@ -191,194 +215,254 @@ bool LIO::GNStep(const SensorMeasurement& sensor_measurement,
 
 double LIO::ConstructGICPConstraints(Eigen::Matrix<double, 15, 15>& H,
                                      Eigen::Matrix<double, 15, 1>& b) {
-  // ── Phase 1: correspondence search (parallel) ───────────────────────────────
-  // Skipped in skip-KNN mode (need_converge_); reuse existing correspondences.
-  if (!need_converge_) {
-    const size_t delta_p_size = voxel_map_ptr_->delta_P_.size();
-    const size_t N = cloud_cov_ptr_->size();
-    correspondences_array_.clear();
+  // Correspondence search and Hessian/gradient assembly are fused into a single
+  // tbb::parallel_reduce, as in the upstream implementation. The only change
+  // from upstream is the reduction value type: a zero-initialised ConstraintAccum
+  // (see top of file) instead of a bare Eigen::Matrix. oneTBB (shipped with
+  // ROS 2) default-constructs the split/identity accumulators, which would leave
+  // a raw Eigen matrix uninitialised -> NaN H; the struct's ctor zeroes it.
 
-    tbb::parallel_for(
-        tbb::blocked_range<size_t>(0, N),
-        [&, this](const tbb::blocked_range<size_t>& r) {
+  // Skip-KNN mode (need_converge_): reuse cached correspondences, assemble only.
+  if (need_converge_) {
+    const ConstraintAccum acc = tbb::parallel_reduce(
+        tbb::blocked_range<size_t>(0, correspondences_array_.size()),
+        ConstraintAccum{},
+        [&, this](const tbb::blocked_range<size_t>& r,
+                  ConstraintAccum local) -> ConstraintAccum {
           for (size_t i = r.begin(); i < r.end(); ++i) {
-            const PointCovType& point_cov = cloud_cov_ptr_->points[i];
-            const Eigen::Vector3d mean_A =
-                point_cov.getVector3fMap().cast<double>();
+            const Correspondence& corr = *correspondences_array_[i];
             const Eigen::Vector3d trans_mean_A =
-                curr_state_.pose.block<3, 3>(0, 0) * mean_A +
+                curr_state_.pose.block<3, 3>(0, 0) * corr.mean_A +
                 curr_state_.pose.block<3, 1>(0, 3);
+            const Eigen::Vector3d error = corr.mean_B - trans_mean_A;
+            const Eigen::Matrix3d& mahalanobis = corr.mahalanobis;
 
-            Eigen::Matrix3d cov_A;
-            cov_A << point_cov.cov[0], point_cov.cov[1], point_cov.cov[2],
-                point_cov.cov[1], point_cov.cov[3], point_cov.cov[4],
-                point_cov.cov[2], point_cov.cov[4], point_cov.cov[5];
+            double cost_function = error.transpose() * mahalanobis * error;
+            Eigen::Vector3d rho;
+            CauchyLossFunction(cost_function, 10.0, rho);
 
-            Eigen::Vector3d mean_B = Eigen::Vector3d::Zero();
-            Eigen::Matrix3d cov_B = Eigen::Matrix3d::Zero();
+            local.y0 += config_.gicp_constraint_gain * rho[0];
 
-            for (size_t j = 0; j < delta_p_size; ++j) {
-              Eigen::Vector3d nearby_point =
-                  trans_mean_A + voxel_map_ptr_->delta_P_[j];
-              size_t hash_idx = voxel_map_ptr_->ComputeHashIndex(nearby_point);
-              if (voxel_map_ptr_->GetCentroidAndCovariance(hash_idx, mean_B,
-                                                           cov_B) &&
-                  voxel_map_ptr_->IsSameGrid(nearby_point, mean_B)) {
-                Eigen::Matrix3d mahalanobis =
-                    (cov_B +
-                     curr_state_.pose.block<3, 3>(0, 0) * cov_A *
-                         curr_state_.pose.block<3, 3>(0, 0).transpose() +
-                     Eigen::Matrix3d::Identity() * 1e-3)
-                        .inverse();
+            Eigen::Matrix<double, 3, 6> dres_dx =
+                Eigen::Matrix<double, 3, 6>::Zero();
+            dres_dx.block<3, 3>(0, 0) = curr_state_.pose.block<3, 3>(0, 0) *
+                                        Sophus::SO3d::hat(corr.mean_A);
+            dres_dx.block<3, 3>(0, 3) = -Eigen::Matrix3d::Identity();
 
-                Eigen::Vector3d error = mean_B - trans_mean_A;
-                double chi2_error = error.transpose() * mahalanobis * error;
-                if (config_.enable_outlier_rejection) {
-                  if (iter_num_ > 2 && chi2_error > 7.815) {
-                    continue;
-                  }
+            Eigen::Matrix3d robust_information_matrix =
+                config_.gicp_constraint_gain *
+                (rho[1] * mahalanobis + 2.0 * rho[2] * mahalanobis * error *
+                                            error.transpose() * mahalanobis);
+            local.H += dres_dx.transpose() * robust_information_matrix * dres_dx;
+            local.b += config_.gicp_constraint_gain * rho[1] *
+                       dres_dx.transpose() * mahalanobis * error;
+          }
+          return local;
+        },
+        std::plus<ConstraintAccum>());
+
+    H.block<6, 6>(IndexErrorOri, IndexErrorOri) += acc.H;
+    b.block<6, 1>(IndexErrorOri, 0) += acc.b;
+    return acc.y0;
+  }
+
+  // Full mode: voxel-map search and assembly fused; correspondences cached for
+  // the following skip-KNN iterations.
+  const size_t delta_p_size = voxel_map_ptr_->delta_P_.size();
+  const size_t N = cloud_cov_ptr_->size();
+  correspondences_array_.clear();
+
+  const ConstraintAccum acc = tbb::parallel_reduce(
+      tbb::blocked_range<size_t>(0, N),
+      ConstraintAccum{},
+      [&, this](const tbb::blocked_range<size_t>& r,
+                ConstraintAccum local) -> ConstraintAccum {
+        for (size_t i = r.begin(); i < r.end(); ++i) {
+          const PointCovType& point_cov = cloud_cov_ptr_->points[i];
+          const Eigen::Vector3d mean_A =
+              point_cov.getVector3fMap().cast<double>();
+          const Eigen::Vector3d trans_mean_A =
+              curr_state_.pose.block<3, 3>(0, 0) * mean_A +
+              curr_state_.pose.block<3, 1>(0, 3);
+
+          Eigen::Matrix3d cov_A;
+          cov_A << point_cov.cov[0], point_cov.cov[1], point_cov.cov[2],
+              point_cov.cov[1], point_cov.cov[3], point_cov.cov[4],
+              point_cov.cov[2], point_cov.cov[4], point_cov.cov[5];
+
+          Eigen::Vector3d mean_B = Eigen::Vector3d::Zero();
+          Eigen::Matrix3d cov_B = Eigen::Matrix3d::Zero();
+
+          for (size_t j = 0; j < delta_p_size; ++j) {
+            Eigen::Vector3d nearby_point =
+                trans_mean_A + voxel_map_ptr_->delta_P_[j];
+            size_t hash_idx = voxel_map_ptr_->ComputeHashIndex(nearby_point);
+            if (voxel_map_ptr_->GetCentroidAndCovariance(hash_idx, mean_B,
+                                                         cov_B) &&
+                voxel_map_ptr_->IsSameGrid(nearby_point, mean_B)) {
+              Eigen::Matrix3d mahalanobis =
+                  (cov_B +
+                   curr_state_.pose.block<3, 3>(0, 0) * cov_A *
+                       curr_state_.pose.block<3, 3>(0, 0).transpose() +
+                   Eigen::Matrix3d::Identity() * 1e-3)
+                      .inverse();
+
+              Eigen::Vector3d error = mean_B - trans_mean_A;
+              double chi2_error = error.transpose() * mahalanobis * error;
+              if (config_.enable_outlier_rejection) {
+                if (iter_num_ > 2 && chi2_error > 7.815) {
+                  continue;
                 }
-
-                std::shared_ptr<Correspondence> corr_ptr =
-                    std::make_shared<Correspondence>();
-                corr_ptr->mean_A = mean_A;
-                corr_ptr->mean_B = mean_B;
-                corr_ptr->mahalanobis = mahalanobis;
-                // concurrent_vector::emplace_back is thread-safe
-                correspondences_array_.emplace_back(corr_ptr);
-
-                break;
               }
+
+              std::shared_ptr<Correspondence> corr_ptr =
+                  std::make_shared<Correspondence>();
+              corr_ptr->mean_A = mean_A;
+              corr_ptr->mean_B = mean_B;
+              corr_ptr->mahalanobis = mahalanobis;
+              // concurrent_vector::emplace_back is thread-safe
+              correspondences_array_.emplace_back(corr_ptr);
+
+              Eigen::Vector3d rho;
+              CauchyLossFunction(chi2_error, 10.0, rho);
+
+              local.y0 += config_.gicp_constraint_gain * rho[0];
+
+              Eigen::Matrix<double, 3, 6> dres_dx =
+                  Eigen::Matrix<double, 3, 6>::Zero();
+              dres_dx.block<3, 3>(0, 0) =
+                  curr_state_.pose.block<3, 3>(0, 0) * Sophus::SO3d::hat(mean_A);
+              dres_dx.block<3, 3>(0, 3) = -Eigen::Matrix3d::Identity();
+
+              Eigen::Matrix3d robust_information_matrix =
+                  config_.gicp_constraint_gain *
+                  (rho[1] * mahalanobis + 2.0 * rho[2] * mahalanobis * error *
+                                              error.transpose() * mahalanobis);
+              local.H +=
+                  dres_dx.transpose() * robust_information_matrix * dres_dx;
+              local.b += config_.gicp_constraint_gain * rho[1] *
+                         dres_dx.transpose() * mahalanobis * error;
+
+              break;
             }
           }
-        });
-  }
+        }
+        return local;
+      },
+      std::plus<ConstraintAccum>());
 
   effect_feat_num_ = correspondences_array_.size();
 
-  // ── Phase 2: Hessian / gradient assembly (serial) ───────────────────────────
-  // See ConstructPoint2PlaneConstraints: a tbb::parallel_reduce over an Eigen
-  // fixed-size matrix is unsafe under the oneTBB shipped with ROS 2 — TBB
-  // default-constructs the split accumulators and Eigen leaves them
-  // uninitialised, producing NaN H. Assemble serially instead.
-  Eigen::Matrix<double, 6, 6> H_pp = Eigen::Matrix<double, 6, 6>::Zero();
-  Eigen::Matrix<double, 6, 1> b_pp = Eigen::Matrix<double, 6, 1>::Zero();
-  double y0 = 0.0;
+  H.block<6, 6>(IndexErrorOri, IndexErrorOri) += acc.H;
+  b.block<6, 1>(IndexErrorOri, 0) += acc.b;
 
-  for (size_t i = 0; i < correspondences_array_.size(); ++i) {
-    const Correspondence& corr = *correspondences_array_[i];
-    const Eigen::Vector3d trans_mean_A =
-        curr_state_.pose.block<3, 3>(0, 0) * corr.mean_A +
-        curr_state_.pose.block<3, 1>(0, 3);
-    const Eigen::Vector3d error = corr.mean_B - trans_mean_A;
-    const Eigen::Matrix3d& mahalanobis = corr.mahalanobis;
-
-    double cost_function = error.transpose() * mahalanobis * error;
-    Eigen::Vector3d rho;
-    CauchyLossFunction(cost_function, 10.0, rho);
-
-    y0 += config_.gicp_constraint_gain * rho[0];
-
-    // Residual Jacobian w.r.t. the state (rotation then position)
-    Eigen::Matrix<double, 3, 6> dres_dx = Eigen::Matrix<double, 3, 6>::Zero();
-    dres_dx.block<3, 3>(0, 0) =
-        curr_state_.pose.block<3, 3>(0, 0) * Sophus::SO3d::hat(corr.mean_A);
-    dres_dx.block<3, 3>(0, 3) = -Eigen::Matrix3d::Identity();
-
-    Eigen::Matrix3d robust_information_matrix =
-        config_.gicp_constraint_gain *
-        (rho[1] * mahalanobis + 2.0 * rho[2] * mahalanobis * error *
-                                    error.transpose() * mahalanobis);
-    H_pp += dres_dx.transpose() * robust_information_matrix * dres_dx;
-    b_pp += config_.gicp_constraint_gain * rho[1] * dres_dx.transpose() *
-            mahalanobis * error;
-  }
-
-  H.block<6, 6>(IndexErrorOri, IndexErrorOri) += H_pp;
-  b.block<6, 1>(IndexErrorOri, 0) += b_pp;
-
-  return y0;
+  return acc.y0;
 }
 
 double LIO::ConstructPoint2PlaneConstraints(Eigen::Matrix<double, 15, 15>& H,
                                             Eigen::Matrix<double, 15, 1>& b) {
-  // ── Phase 1: correspondence search (parallel) ───────────────────────────────
-  // Skipped in the "skip-KNN" acceleration mode (need_converge_), where we reuse
-  // the correspondences found during the first iterations.
-  if (!need_converge_) {
-    const size_t N = cloud_cov_ptr_->size();
-    correspondences_array_.clear();
+  // Search + assembly fused into one parallel_reduce, matching upstream; the
+  // reduction value is a zero-initialised ConstraintAccum (see the note in
+  // ConstructGICPConstraints and the struct at the top of the file).
 
-    tbb::parallel_for(
-        tbb::blocked_range<size_t>(0, N),
-        [&, this](const tbb::blocked_range<size_t>& r) {
+  // Skip-KNN mode (need_converge_): reuse cached correspondences, assemble only.
+  if (need_converge_) {
+    const ConstraintAccum acc = tbb::parallel_reduce(
+        tbb::blocked_range<size_t>(0, correspondences_array_.size()),
+        ConstraintAccum{},
+        [&, this](const tbb::blocked_range<size_t>& r,
+                  ConstraintAccum local) -> ConstraintAccum {
           for (size_t i = r.begin(); i < r.end(); ++i) {
-            const Eigen::Vector3d p =
-                cloud_cov_ptr_->points[i].getVector3fMap().cast<double>();
-            const Eigen::Vector3d p_w =
-                curr_state_.pose.block<3, 3>(0, 0) * p +
+            const Correspondence& corr = *correspondences_array_[i];
+            const Eigen::Vector3d trans_pt =
+                curr_state_.pose.block<3, 3>(0, 0) * corr.mean_A +
                 curr_state_.pose.block<3, 1>(0, 3);
+            const Eigen::Vector4d& plane_coeff = corr.plane_coeff;
 
-            std::vector<Eigen::Vector3d> nearest_points;
-            nearest_points.reserve(10);
-            voxel_map_ptr_->KNNByCondition(p_w, 5, 5.0, nearest_points);
+            const double error =
+                plane_coeff.head(3).dot(trans_pt) + plane_coeff(3, 0);
+            local.y0 += config_.point2plane_constraint_gain * error * error;
 
-            Eigen::Vector4d plane_coeff;
-            if (nearest_points.size() >= 3 &&
-                EstimatePlane(plane_coeff, nearest_points)) {
-              const double error =
-                  plane_coeff.head(3).dot(p_w) + plane_coeff(3, 0);
-              if (p.norm() > (81 * error * error)) {
-                std::shared_ptr<Correspondence> corr_ptr =
-                    std::make_shared<Correspondence>();
-                corr_ptr->mean_A = p;
-                corr_ptr->plane_coeff = plane_coeff;
-                // concurrent_vector::emplace_back is thread-safe
-                correspondences_array_.emplace_back(corr_ptr);
-              }
+            Eigen::Matrix<double, 1, 6> dres_dx =
+                Eigen::Matrix<double, 1, 6>::Zero();
+            dres_dx.block<1, 3>(0, 0) = -plane_coeff.head(3).transpose() *
+                                        curr_state_.pose.block<3, 3>(0, 0) *
+                                        Sophus::SO3d::hat(corr.mean_A);
+            dres_dx.block<1, 3>(0, 3) = plane_coeff.head(3).transpose();
+
+            local.H += config_.point2plane_constraint_gain *
+                       dres_dx.transpose() * dres_dx;
+            local.b += config_.point2plane_constraint_gain *
+                       dres_dx.transpose() * error;
+          }
+          return local;
+        },
+        std::plus<ConstraintAccum>());
+
+    H.block<6, 6>(IndexErrorOri, IndexErrorOri) += acc.H;
+    b.block<6, 1>(IndexErrorOri, 0) += acc.b;
+    return acc.y0;
+  }
+
+  // Full mode: KNN plane fit and assembly fused; correspondences cached for the
+  // following skip-KNN iterations.
+  const size_t N = cloud_cov_ptr_->size();
+  correspondences_array_.clear();
+
+  const ConstraintAccum acc = tbb::parallel_reduce(
+      tbb::blocked_range<size_t>(0, N),
+      ConstraintAccum{},
+      [&, this](const tbb::blocked_range<size_t>& r,
+                ConstraintAccum local) -> ConstraintAccum {
+        for (size_t i = r.begin(); i < r.end(); ++i) {
+          const Eigen::Vector3d p =
+              cloud_cov_ptr_->points[i].getVector3fMap().cast<double>();
+          const Eigen::Vector3d p_w = curr_state_.pose.block<3, 3>(0, 0) * p +
+                                      curr_state_.pose.block<3, 1>(0, 3);
+
+          std::vector<Eigen::Vector3d> nearest_points;
+          nearest_points.reserve(10);
+          voxel_map_ptr_->KNNByCondition(p_w, 5, 5.0, nearest_points);
+
+          Eigen::Vector4d plane_coeff;
+          if (nearest_points.size() >= 3 &&
+              EstimatePlane(plane_coeff, nearest_points)) {
+            const double error =
+                plane_coeff.head(3).dot(p_w) + plane_coeff(3, 0);
+            if (p.norm() > (81 * error * error)) {
+              std::shared_ptr<Correspondence> corr_ptr =
+                  std::make_shared<Correspondence>();
+              corr_ptr->mean_A = p;
+              corr_ptr->plane_coeff = plane_coeff;
+              // concurrent_vector::emplace_back is thread-safe
+              correspondences_array_.emplace_back(corr_ptr);
+
+              local.y0 += config_.point2plane_constraint_gain * error * error;
+
+              Eigen::Matrix<double, 1, 6> dres_dx =
+                  Eigen::Matrix<double, 1, 6>::Zero();
+              dres_dx.block<1, 3>(0, 0) = -plane_coeff.head(3).transpose() *
+                                          curr_state_.pose.block<3, 3>(0, 0) *
+                                          Sophus::SO3d::hat(p);
+              dres_dx.block<1, 3>(0, 3) = plane_coeff.head(3).transpose();
+
+              local.H += config_.point2plane_constraint_gain *
+                         dres_dx.transpose() * dres_dx;
+              local.b += config_.point2plane_constraint_gain *
+                         dres_dx.transpose() * error;
             }
           }
-        });
-  }
+        }
+        return local;
+      },
+      std::plus<ConstraintAccum>());
 
   effect_feat_num_ = correspondences_array_.size();
 
-  // ── Phase 2: Hessian / gradient assembly (serial) ───────────────────────────
-  // This is deliberately NOT a tbb::parallel_reduce over an Eigen fixed-size
-  // matrix. Under the oneTBB shipped with ROS 2 (Jazzy), using a 32-byte-aligned
-  // Eigen::Matrix as the reduction value returned a partially-uninitialised
-  // accumulator (NaN H, subnormal cost) — the source of the SO3::exp(nan)
-  // crashes. The loop is a few thousand 6x6 updates; cost is negligible and the
-  // expensive KNN above stays parallel.
-  Eigen::Matrix<double, 6, 6> H_pp = Eigen::Matrix<double, 6, 6>::Zero();
-  Eigen::Matrix<double, 6, 1> b_pp = Eigen::Matrix<double, 6, 1>::Zero();
-  double y0 = 0.0;
+  H.block<6, 6>(IndexErrorOri, IndexErrorOri) += acc.H;
+  b.block<6, 1>(IndexErrorOri, 0) += acc.b;
 
-  for (size_t i = 0; i < correspondences_array_.size(); ++i) {
-    const Correspondence& corr = *correspondences_array_[i];
-    const Eigen::Vector3d trans_pt =
-        curr_state_.pose.block<3, 3>(0, 0) * corr.mean_A +
-        curr_state_.pose.block<3, 1>(0, 3);
-    const Eigen::Vector4d& plane_coeff = corr.plane_coeff;
-
-    const double error = plane_coeff.head(3).dot(trans_pt) + plane_coeff(3, 0);
-    y0 += config_.point2plane_constraint_gain * error * error;
-
-    // Residual Jacobian w.r.t. the state (rotation then position)
-    Eigen::Matrix<double, 1, 6> dres_dx = Eigen::Matrix<double, 1, 6>::Zero();
-    dres_dx.block<1, 3>(0, 0) = -plane_coeff.head(3).transpose() *
-                                curr_state_.pose.block<3, 3>(0, 0) *
-                                Sophus::SO3d::hat(corr.mean_A);
-    dres_dx.block<1, 3>(0, 3) = plane_coeff.head(3).transpose();
-
-    H_pp += config_.point2plane_constraint_gain * dres_dx.transpose() * dres_dx;
-    b_pp += config_.point2plane_constraint_gain * dres_dx.transpose() * error;
-  }
-
-  H.block<6, 6>(IndexErrorOri, IndexErrorOri) += H_pp;
-  b.block<6, 1>(IndexErrorOri, 0) += b_pp;
-
-  return y0;
+  return acc.y0;
 }
 
 double LIO::ConstructImuPriorConstraints(Eigen::Matrix<double, 15, 15>& H,
