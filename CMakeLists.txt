@@ -19,6 +19,12 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_ros
 )
 
+## Optional: Livox CustomMsg support. Only enabled if the Livox driver
+## (livox_ros_driver2) is present in the workspace -- it is NOT a hard
+## dependency, so rosdep/build work without it. When found, HAVE_LIVOX is
+## defined and the Livox CustomMsg path (lidar_type: livox) is compiled in.
+find_package(livox_ros_driver2 QUIET)
+
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
 find_package(Eigen3 REQUIRED)
@@ -61,6 +67,17 @@ target_link_libraries(${PROJECT_NAME}_node
   gflags
   TBB::tbb
 )
+
+# Optional Livox support (see find_package above).
+if(livox_ros_driver2_FOUND)
+  message(STATUS "ig_lio: livox_ros_driver2 found -- Livox CustomMsg support ENABLED (lidar_type: livox)")
+  target_compile_definitions(${PROJECT_NAME}_node PRIVATE HAVE_LIVOX)
+  target_include_directories(${PROJECT_NAME}_node SYSTEM PRIVATE ${livox_ros_driver2_INCLUDE_DIRS})
+  add_dependencies(${PROJECT_NAME}_node ${livox_ros_driver2_EXPORTED_TARGETS})
+else()
+  message(STATUS "ig_lio: livox_ros_driver2 NOT found -- Livox CustomMsg support DISABLED. "
+                 "Install it in your workspace and rebuild to enable lidar_type: livox.")
+endif()
 
 install(TARGETS ${PROJECT_NAME}_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

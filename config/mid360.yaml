@@ -1,0 +1,60 @@
+# Livox Mid-360 config for the ROS1 (Noetic) ig_lio.
+# Ported from the ros2-jazzy config/mid360.yaml. ROS1 uses a flat rosparam
+# layout (no "ig_lio_node: ros__parameters:" wrapper), and the ROS1 node does
+# not read the ROS2-only keys (qos_reliability, odom_frame, base_frame,
+# result_directory), so they are omitted here.
+
+lidar_topic: /livox/lidar
+imu_topic: /livox/imu
+# The Mid-360 (livox_ros_driver2 xfer_format=0) publishes sensor_msgs/
+# PointCloud2, not the CustomMsg type. Use "livox_points" for that.
+lidar_type: livox_points
+
+min_radius: 0.5
+max_radius: 150.0
+point_filter_num: 3
+# The Livox per-point timestamp is absolute nanoseconds; the livox_points path
+# converts to relative ms itself, so time_scale is not used here (kept for
+# parameter parity).
+time_scale: 0.001
+
+enable_ahrs_initalization: false
+# Some Livox datasets omit the gravitational constant in the accelerometer.
+enable_acc_correct: true
+
+# IMU samples averaged at startup to estimate gravity direction + gyro bias.
+# The Mid-360 IMU is noisy/vibrating even at rest, so 20 (~0.1 s) gives a poor
+# estimate; 200 (~1 s at 200 Hz) averages it out. Requires the sensor to be
+# stationary for ~1 s at the start of the recording.
+init_count: 200
+
+scan_resolution: 0.5
+voxel_map_resolution: 0.5
+max_iterations: 10
+
+acc_cov: 0.1
+gyr_cov: 0.1
+# Loosened from 1e-6 so the filter can correct residual IMU bias online (the
+# static init can't fully remove it given the noisy Mid-360 IMU).
+ba_cov: 0.0001
+bg_cov: 0.0001
+
+gicp_constraints_gain: 100.0
+point2plane_constraints_gain: 1000.0
+
+enable_undistort: true
+enable_outlier_rejection: true
+
+gravity: 9.80665
+
+init_ori_cov: 0.0001
+init_pos_cov: 0.0001
+init_vel_cov: 100.0
+init_ba_cov: 0.0001
+init_bg_cov: 0.0001
+
+# Mid-360 extrinsics (maps points from the LiDAR frame to the IMU frame)
+t_imu_lidar: [ -0.01100, -0.02329, 0.04412 ]
+R_imu_lidar: [ 1.0, 0.0, 0.0,
+               0.0, 1.0, 0.0,
+               0.0, 0.0, 1.0 ]

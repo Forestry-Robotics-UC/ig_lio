@@ -8,6 +8,9 @@
 #include <ros/package.h>
 #include <ros/ros.h>
 #include <sensor_msgs/Imu.h>
+#ifdef HAVE_LIVOX
+#include <livox_ros_driver2/CustomMsg.h>
+#endif
 #include <tf/transform_broadcaster.h>
 #include <boost/filesystem.hpp>
 
@@ -126,6 +129,35 @@ void CloudCallBack(const sensor_msgs::PointCloud2::ConstPtr& msg) {
       },
       "Cloud Preprocess (Standard)");
 }
+
+#ifdef HAVE_LIVOX
+// Livox does not publish PointCloud2, so it gets its own callback feeding the
+// same cloud_buff. Ported from upstream; not validated on hardware in this fork.
+void LivoxCloudCallBack(const livox_ros_driver2::CustomMsg::ConstPtr& msg) {
+  static double last_lidar_timestamp = 0.0;
+  timer.Evaluate(
+      [&]() {
+        lidar_timestamp = msg->header.stamp.toSec();
+
+        CloudPtr cloud_ptr(new CloudType());
+        cloud_preprocess_ptr->ProcessLivox(msg, cloud_ptr);
+
+        {
+          std::lock_guard<std::mutex> lock(buff_mutex);
+
+          if (lidar_timestamp < last_lidar_timestamp) {
+            LOG(WARNING) << "lidar loop back, clear buffer";
+            cloud_buff.clear();
+          }
+          last_lidar_timestamp = lidar_timestamp;
+
+          cloud_buff.push_back(
+              std::make_pair(msg->header.stamp.toSec(), cloud_ptr));
+        }
+      },
+      "Cloud Preprocess (Livox)");
+}
+#endif
 
 
 bool SyncMeasurements() {
@@ -513,13 +545,36 @@ int main(int argc, char** argv) {
     lidar_type = LidarType::HESAI;
   } else if (lidar_type_string == "ouster") {
     lidar_type = LidarType::OUSTER;
+  } else if (lidar_type_string == "livox_points") {
+    // Livox published as PointCloud2 (livox_ros_driver2 xfer_format=0, e.g.
+    // Mid-360). Uses the standard PointCloud2 subscription, so it needs no
+    // optional driver -- unlike the raw CustomMsg path below.
+    lidar_type = LidarType::LIVOX_POINTS;
+  } else if (lidar_type_string == "livox") {
+#ifdef HAVE_LIVOX
+    lidar_type = LidarType::LIVOX;
+#else
+    LOG(ERROR) << "lidar_type 'livox' selected but ig_lio was built without "
+                  "livox_ros_driver2. Install the driver in your workspace and "
+                  "rebuild to enable the Livox CustomMsg path (or use "
+                  "'livox_points' for a Livox that publishes PointCloud2).";
+    exit(0);
+#endif
   } else {
     LOG(ERROR) << "Error lidar type!";
     exit(0);
   }
-  ros::Subscriber cloud_sub;
 
-  cloud_sub = nh.subscribe(lidar_topic, 10000, CloudCallBack);
+  // Livox uses its own CustomMsg subscription; everything else is PointCloud2.
+  ros::Subscriber cloud_sub;
+#ifdef HAVE_LIVOX
+  if (lidar_type == LidarType::LIVOX) {
+    cloud_sub = nh.subscribe(lidar_topic, 10000, LivoxCloudCallBack);
+  } else
+#endif
+  {
+    cloud_sub = nh.subscribe(lidar_topic, 10000, CloudCallBack);
+  }
 
   // load param
   // 1. pointcloud_preprocess
@@ -570,6 +625,12 @@ int main(int argc, char** argv) {
   double min_radius, max_radius;
   nh.param<double>("min_radius", min_radius, 1.0);
   nh.param<double>("max_radius", max_radius, 1.0);
+
+  // Static-init averaging window (IMU samples). Default 20 preserves the
+  // original behaviour; raise it for noisy/vibrating IMUs that sit still at
+  // start (see config/mid360.yaml).
+  int init_count;
+  nh.param<int>("init_count", init_count, 20);
 
   LOG(INFO) << "scan_resoultion: " << scan_resolution << std::endl
             << "voxel_map_resolution: " << voxel_map_resolution << std::endl
@@ -634,6 +695,7 @@ int main(int argc, char** argv) {
   lio_config.voxel_map_resolution = voxel_map_resolution;
   lio_config.min_radius = min_radius;
   lio_config.max_radius = max_radius;
+  lio_config.init_count = static_cast<size_t>(init_count);
 
   lio_config.T_imu_lidar = T_imu_lidar;
 

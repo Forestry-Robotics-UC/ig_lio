@@ -19,6 +19,9 @@ void PointCloudPreprocess::Process(
   case LidarType::VELODYNEM1600:
     ProcessVelodyneM1600(msg, cloud_out);
     break;
+  case LidarType::LIVOX_POINTS:
+    ProcessLivoxPointCloud2(msg, cloud_out);
+    break;
   default:
     LOG(INFO) << "Error LiDAR Type!!!" << std::endl;
     exit(0);
@@ -184,6 +187,77 @@ void PointCloudPreprocess::ProcessHesai(
 
 
 
+
+#ifdef HAVE_LIVOX
+void PointCloudPreprocess::ProcessLivox(
+    const livox_ros_driver2::CustomMsg::ConstPtr& msg,
+    pcl::PointCloud<PointType>::Ptr& cloud_out) {
+  cloud_out->clear();
+  cloud_out->reserve(msg->point_num);
+
+  for (size_t i = 1; i < msg->point_num; ++i) {
+    // Keep only valid scan lines and good returns: tag bits 0x30 select the
+    // spatial/intensity confidence; 0x10 (high) or 0x00 (normal) are kept.
+    if ((msg->points[i].line < num_scans_) &&
+        (((msg->points[i].tag & 0x30) == 0x10) ||
+         ((msg->points[i].tag & 0x30) == 0x00)) &&
+        (i % config_.point_filter_num == 0) && !HasInf(msg->points[i]) &&
+        !HasNan(msg->points[i]) && !IsNear(msg->points[i], msg->points[i - 1])) {
+      PointType point;
+      point.normal_x = 0;
+      point.normal_y = 0;
+      point.normal_z = 0;
+      point.x = msg->points[i].x;
+      point.y = msg->points[i].y;
+      point.z = msg->points[i].z;
+      point.intensity = msg->points[i].reflectivity;
+      // offset_time is nanoseconds from the scan start; curvature is in ms,
+      // matching the per-cloud relative-time convention used for the others.
+      point.curvature = msg->points[i].offset_time * 1e-6;
+      cloud_out->push_back(point);
+    }
+  }
+}
+#endif
+
+void PointCloudPreprocess::ProcessLivoxPointCloud2(
+    const sensor_msgs::PointCloud2::ConstPtr& msg,
+    pcl::PointCloud<PointType>::Ptr& cloud_out) {
+  pcl::PointCloud<LivoxPointXYZITLT> cloud_origin;
+  pcl::fromROSMsg(*msg, cloud_origin);
+
+  cloud_out->clear();
+  if (cloud_origin.empty())
+    return;
+  cloud_out->reserve(cloud_origin.size());
+
+  // timestamp is the absolute time of each point in nanoseconds. Make it
+  // relative to the scan start and convert to milliseconds, matching the
+  // per-cloud relative-time (curvature) convention used by the other paths.
+  const double time_begin = cloud_origin.points.front().timestamp;
+
+  for (size_t i = 1; i < cloud_origin.size(); ++i) {
+    const auto& pi = cloud_origin.points[i];
+    // Keep only valid scan lines and good returns: tag bits 0x30 select the
+    // spatial/intensity confidence; 0x10 (high) or 0x00 (normal) are kept.
+    // Mirrors the Livox CustomMsg path.
+    if ((pi.line < num_scans_) &&
+        (((pi.tag & 0x30) == 0x10) || ((pi.tag & 0x30) == 0x00)) &&
+        (i % config_.point_filter_num == 0) && !HasInf(pi) && !HasNan(pi) &&
+        !IsNear(pi, cloud_origin.points[i - 1])) {
+      PointType point;
+      point.normal_x = 0;
+      point.normal_y = 0;
+      point.normal_z = 0;
+      point.x = pi.x;
+      point.y = pi.y;
+      point.z = pi.z;
+      point.intensity = pi.intensity;
+      point.curvature = (pi.timestamp - time_begin) * 1e-6;  // ns -> ms
+      cloud_out->push_back(point);
+    }
+  }
+}
 
 void PointCloudPreprocess::ProcessOuster(
     const sensor_msgs::PointCloud2::ConstPtr& msg,
