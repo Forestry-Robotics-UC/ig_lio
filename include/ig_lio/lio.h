@@ -79,6 +79,12 @@ class LIO {
 
     double max_radius{150.0};
     double min_radius{0.5};
+
+    // Number of (assumed-stationary) IMU samples averaged at startup to
+    // estimate the initial gravity direction and gyro bias. The default 20 is
+    // ~0.1 s at 200 Hz; raise it when the sensor sits still longer at the start
+    // and the IMU is noisy/vibrating, so the bias/gravity estimate averages out.
+    size_t init_count{20};
   };
 
   LIO(Config config = Config())
@@ -95,6 +101,7 @@ class LIO {
 
     correspondences_array_.reserve(10000);
     g_ = Eigen::Vector3d(0.0, 0.0, config_.gravity);
+    max_init_count_ = config_.init_count;
   }
 
   bool MeasurementUpdate(SensorMeasurement& sensor_measurement);

@@ -1,0 +1,83 @@
+ig_lio_node:
+  ros__parameters:
+
+    lidar_topic: "/livox/lidar"
+    imu_topic: "/livox/imu"
+    # The Mid-360 (livox_ros_driver2 xfer_format=0) publishes sensor_msgs/
+    # PointCloud2, not the CustomMsg type. Use "livox_points" for that; the
+    # plain "livox" type is for the CustomMsg path and needs the Livox driver.
+    lidar_type: "livox_points"
+
+    # Subscription QoS reliability: "best_effort" (default) matches both
+    # best_effort and reliable publishers; "reliable" only matches reliable
+    # publishers but guarantees delivery. Check a bag with:
+    #   ros2 topic info -v <topic>   (look at the Reliability line)
+    qos_reliability: "best_effort"
+
+    # TF / odometry frame names. Override these if something else already
+    # publishes odom->base_link (e.g. set base_frame: "lio_base_link") so the
+    # two transforms don't collide. odom_frame is the global frame that the
+    # published scans and path also live in.
+    odom_frame: "odom"
+    base_frame: "livox_frame"
+
+    # Directory for the trajectory output (lio_odom.txt). Empty -> the package's
+    # own result/ directory (its source tree). Set a full path to override.
+    result_directory: ""
+
+    min_radius: 0.5
+    max_radius: 150.0
+    point_filter_num: 3
+    # The Livox per-point timestamp is absolute nanoseconds; the livox_points
+    # path converts to relative ms itself, so time_scale is not used here (kept
+    # for parameter parity).
+    time_scale: 0.001
+
+    enable_ahrs_initalization: false
+    # Some Livox datasets omit the gravitational constant in the accelerometer.
+    enable_acc_correct: true
+
+    # IMU samples averaged at startup to estimate gravity direction + gyro bias.
+    # The Mid-360 IMU is noisy/vibrating even at rest, so 20 (~0.1 s) gives a
+    # poor estimate; 200 (~1 s at 200 Hz) averages it out. Requires the sensor
+    # to be stationary for ~1 s at the start of the recording.
+    init_count: 200
+
+    scan_resolution: 0.5
+    voxel_map_resolution: 0.5
+    max_iterations: 10
+
+    acc_cov: 0.1
+    gyr_cov: 0.1
+    # Loosened from 1e-6 so the filter can correct residual IMU bias online
+    # (the static init can't fully remove it given the noisy Mid-360 IMU).
+    ba_cov: 0.0001
+    bg_cov: 0.0001
+
+    gicp_constraints_gain: 100.0
+    point2plane_constraints_gain: 1000.0
+
+    enable_undistort: true
+    enable_outlier_rejection: true
+
+    gravity: 9.80665
+
+    init_ori_cov: 0.0001
+    init_pos_cov: 0.0001
+    init_vel_cov: 100.0
+    init_ba_cov: 0.0001
+    init_bg_cov: 0.0001
+
+    # Mid-360 extrinsics (maps points from the LiDAR frame to the IMU frame)
+    t_imu_lidar: [-0.01100, -0.02329, 0.04412]
+
+    R_imu_lidar:
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1.0

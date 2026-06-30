@@ -11,7 +11,7 @@ import os
 def generate_launch_description():
     pkg_share = get_package_share_directory('ig_lio')
 
-    ig_lio_config = os.path.join(pkg_share, 'config', 'avia.yaml')
+    ig_lio_config = os.path.join(pkg_share, 'config', 'mid360.yaml')
     rviz_config = os.path.join(pkg_share, 'rviz', 'ros2.rviz')
 
     # Single source of truth for sim time, shared by every node below. Set

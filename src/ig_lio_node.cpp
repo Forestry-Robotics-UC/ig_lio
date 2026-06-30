@@ -576,6 +576,11 @@ int main(int argc, char** argv)
     lidar_type = LidarType::HESAI;
   } else if (lidar_type_string == "ouster") {
     lidar_type = LidarType::OUSTER;
+  } else if (lidar_type_string == "livox_points") {
+    // Livox published as PointCloud2 (livox_ros_driver2 xfer_format=0, e.g.
+    // Mid-360). Uses the standard PointCloud2 subscription, so it needs no
+    // optional driver -- unlike the "livox" CustomMsg path below.
+    lidar_type = LidarType::LIVOX_POINTS;
   } else if (lidar_type_string == "livox") {
 #ifdef HAVE_LIVOX
     lidar_type = LidarType::LIVOX;
@@ -677,6 +682,13 @@ int main(int argc, char** argv)
   g_node->get_parameter("min_radius", min_radius);
   g_node->get_parameter("max_radius", max_radius);
 
+  // Static-init averaging window (IMU samples). Default 20 preserves the
+  // original behaviour; raise it for noisy/vibrating IMUs that sit still at
+  // start (see config/mid360.yaml).
+  int init_count;
+  g_node->declare_parameter<int>("init_count", 20);
+  g_node->get_parameter("init_count", init_count);
+
   LOG(INFO) << "\nscan_resolution: "             << scan_resolution
             << "\nvoxel_map_resolution: "       << voxel_map_resolution
             << "\nmax_iterations: "             << max_iterations
@@ -736,6 +748,7 @@ int main(int argc, char** argv)
   lio_config.voxel_map_resolution = voxel_map_resolution;
   lio_config.min_radius = min_radius;
   lio_config.max_radius = max_radius;
+  lio_config.init_count = static_cast<size_t>(init_count);
   lio_config.T_imu_lidar = T_imu_lidar;
   lio_ptr = std::make_shared<LIO>(lio_config);
 

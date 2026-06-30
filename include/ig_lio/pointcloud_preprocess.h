@@ -16,7 +16,23 @@
 
 #include "point_type.h"
 
-enum class LidarType { VELODYNE, OUSTER, HESAI, VELODYNEM1600, LIVOX };
+enum class LidarType { VELODYNE, OUSTER, HESAI, VELODYNEM1600, LIVOX, LIVOX_POINTS };
+
+// for Livox LiDARs published as PointCloud2 (livox_ros_driver2 xfer_format=0),
+// e.g. a Mid-360. Layout: x,y,z,intensity (float), tag,line (uint8),
+// timestamp (double, absolute time of the point in nanoseconds).
+struct LivoxPointXYZITLT {
+  PCL_ADD_POINT4D;
+  float intensity;
+  std::uint8_t tag;
+  std::uint8_t line;
+  double timestamp;
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+} EIGEN_ALIGN16;
+POINT_CLOUD_REGISTER_POINT_STRUCT(
+    LivoxPointXYZITLT,
+    (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(
+        std::uint8_t, tag, tag)(std::uint8_t, line, line)(double, timestamp, timestamp))
 
 // for Velodyne LiDAR
 struct VelodynePointXYZIRT {
@@ -120,6 +136,10 @@ class PointCloudPreprocess {
                     pcl::PointCloud<PointType>::Ptr& cloud_out);
   void ProcessOuster(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg,
                      pcl::PointCloud<PointType>::Ptr& cloud_out);
+  // Livox published as PointCloud2 (e.g. Mid-360), as opposed to CustomMsg.
+  void ProcessLivoxPointCloud2(
+      const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg,
+      pcl::PointCloud<PointType>::Ptr& cloud_out);
 
   int num_scans_ = 128;
   bool has_time_ = false;
