@@ -3,3 +3,7 @@ __pycache__/
 
 # Internal handoff / drafting notes (not part of the package)
 docs/
+
+# build artifacts
+build/
+install/

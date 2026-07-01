@@ -61,7 +61,15 @@ ig_lio_node:
     init_ba_cov: 0.0001
     init_bg_cov: 0.0001
 
-    t_imu_lidar: [-0.009725, 0.002441, -0.007533]
+    # os0_64_rev7 extrinsics (maps points from the os_lidar frame to the os_imu
+    # frame, i.e. p_imu = R_imu_lidar * p_lidar + t_imu_lidar).
+    # Derived from the sensor metadata as inv(imu_to_sensor) * lidar_to_sensor:
+    #   imu_to_sensor   translation = (-2.441, -9.725,  7.533) mm, R = I
+    #   lidar_to_sensor translation = ( 0.000,  0.000, 38.195) mm, R = I
+    # -> lidar->imu is a pure translation (identity rotation). The Ouster 180deg
+    #    lidar/sensor flip lives in lidar_frame_azimuth_offset, so it is already
+    #    baked into the published point XYZ and must NOT be duplicated here.
+    t_imu_lidar: [0.002441, 0.009725, 0.030662]
 
     R_imu_lidar:
       - 1.0

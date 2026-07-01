@@ -98,6 +98,12 @@ class PointCloudPreprocess {
     int point_filter_num{4};
     LidarType lidar_type = LidarType::VELODYNE;
     double time_scale{1000.0};
+    // Ouster only: if the incoming cloud is destaggered (columns rolled per
+    // beam so points[0] is no longer the first firing), anchor the per-point
+    // scan time to the minimum t over the cloud instead of points[0].t. Costs
+    // one extra pass; leave false for native staggered clouds (the default) to
+    // keep the original single-pass behavior. See ProcessOuster.
+    bool ouster_destaggered{false};
   };
 
   PointCloudPreprocess() = delete;

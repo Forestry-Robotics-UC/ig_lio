@@ -613,17 +613,25 @@ int main(int argc, char** argv)
   // ── Parameters: point-cloud pre-processing ──────────────────────────────────
   double time_scale;
   int point_filter_num;
+  bool ouster_destaggered;
   g_node->declare_parameter<double>("time_scale", 1.0);
   g_node->declare_parameter<int>("point_filter_num", 1);
+  // Set true only for Ouster clouds published destaggered (driver default since
+  // ouster_ros v0.10.0). Leave false for native staggered clouds to keep the
+  // original single-pass deskew anchor (points[0].t).
+  g_node->declare_parameter<bool>("ouster_destaggered", false);
   g_node->get_parameter("time_scale", time_scale);
   g_node->get_parameter("point_filter_num", point_filter_num);
+  g_node->get_parameter("ouster_destaggered", ouster_destaggered);
 
-  LOG(INFO) << "\ntime_scale: " << time_scale << "\npoint_filter_num: " << point_filter_num;
+  LOG(INFO) << "\ntime_scale: " << time_scale << "\npoint_filter_num: " << point_filter_num
+            << "\nouster_destaggered: " << ouster_destaggered;
 
   PointCloudPreprocess::Config cloud_preprocess_config;
   cloud_preprocess_config.lidar_type = lidar_type;
   cloud_preprocess_config.point_filter_num = point_filter_num;
   cloud_preprocess_config.time_scale = time_scale;
+  cloud_preprocess_config.ouster_destaggered = ouster_destaggered;
   cloud_preprocess_ptr =
       std::make_shared<PointCloudPreprocess>(cloud_preprocess_config);
 
