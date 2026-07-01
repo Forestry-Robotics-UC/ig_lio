@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "ig_lio/pointcloud_preprocess.h"
 #include "ig_lio/timer.h"
 
@@ -265,7 +267,19 @@ void PointCloudPreprocess::ProcessOuster(
   pcl::PointCloud<OusterPointXYZIRT> cloud_origin;
   pcl::fromROSMsg(*msg, cloud_origin);
 
-  const uint32_t t_start = cloud_origin.points[0].t;
+  if (cloud_origin.empty()) return;
+  // Anchor the per-point scan time (curvature) to the first firing of the scan.
+  // For a native STAGGERED cloud, points[0] is already the first firing, so
+  // t_start = points[0].t (single pass, original behavior).
+  // For a DESTAGGERED cloud the rows are rolled per-beam, so points[0] lands ~1
+  // column-period into the scan; points[0].t would make ~97% of curvatures
+  // negative and corrupt deskew. Then anchor to min(t) instead (one extra pass).
+  uint32_t t_start = cloud_origin.points[0].t;
+  if (config_.ouster_destaggered) {
+    for (const auto& p : cloud_origin.points) {
+      t_start = std::min(t_start, p.t);
+    }
+  }
 
   for (size_t i = 0; i < cloud_origin.size(); ++i) {
     if ((i % config_.point_filter_num == 0) && !HasInf(cloud_origin.at(i)) &&

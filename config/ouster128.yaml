@@ -5,6 +5,13 @@ min_radius: 1
 max_radius: 30
 point_filter_num: 5
 time_scale: 0.000000001
+# Set true if the Ouster driver publishes DESTAGGERED clouds (its default since
+# ouster_ros v0.10.0 - i.e. running online off the live driver, or any bag
+# converted with destagger:=true). Leave false for native STAGGERED clouds
+# (older drivers, or a bag converted with destagger:=false), which keeps the
+# faster single-pass deskew. Wrong value -> smeared map on fast rotations.
+# Check a cloud: staggered has points[0].t == 0.
+ouster_destaggered: false
 enable_ahrs_initalization: false
 enable_acc_correct: false
 
