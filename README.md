@@ -1,5 +1,20 @@
 # FRUC iG-LIO (ROS 2)
 
+## Citation
+
+If you use this ROS 2 port in your work, please cite:
+
+```bibtex
+@article{carvalho2026numerically,
+  title={A Numerically-Robust ROS 2 Port of iG-LIO: Diagnosing and Fixing Toolchain-Induced Failures in Incremental GICP LiDAR-Inertial Odometry},
+  author={Carvalho, Afonso E and Portugal, David and Peixoto, Paulo},
+  journal={arXiv preprint arXiv:2607.09947},
+  year={2026}
+}
+```
+
+---
+
 A ROS 2 port of iG-LIO, a tightly-coupled LiDAR-inertial odometry system. This
 fork preserves the functionality of the original code, but introduces some
 important modifications:
