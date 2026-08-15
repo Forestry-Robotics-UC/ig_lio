@@ -1,7 +1,9 @@
 <launch>
     <rosparam command="load" file="$(find ig_lio)/config/mid360.yaml" />
 
+    <node pkg="tf" type="static_transform_publisher" name="ouster_broadcaster" args="0 0 2.0 0 0 0 base_link livox_frame 10" />
+
     <node pkg="ig_lio" type="ig_lio_node" name="ig_lio_node" output="screen" />
 
-    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ig_lio)/rviz/lio_show.rviz" required="true" />
+    <!-- <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ig_lio)/rviz/lio_show.rviz" required="true" /> -->
 </launch>
